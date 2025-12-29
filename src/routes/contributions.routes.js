@@ -9,20 +9,12 @@ const pujaCtrl = require("../controllers/pujaContribution.controller");
 
 router.use(auth);
 
-/* ================= WEEKLY ================= */
-
-// GET weekly contributions
+// WEEKLY
 router.get("/weekly", weeklyCtrl.list);
-
-// ADD weekly contribution
 router.post("/weekly", checkYearOpen, weeklyCtrl.create);
 
-/* ================= PUJA ================= */
-
-// GET puja contributions
+// PUJA
 router.get("/puja", pujaCtrl.list);
-
-// ADD puja contribution
 router.post("/puja", checkYearOpen, pujaCtrl.create);
 
 module.exports = router;

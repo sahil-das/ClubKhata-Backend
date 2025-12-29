@@ -9,6 +9,7 @@ const donationRoutes = require('./routes/donations.routes');
 const expenseRoutes = require('./routes/expenses.routes');
 const reportRoutes = require('./routes/reports.routes');
 const yearRoutes = require('./routes/year.routes');
+const historyRoutes = require('./routes/history.routes');
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use('/api/donations', donationRoutes);
 app.use('/api/expenses', expenseRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/years', yearRoutes);
+app.use("/api/history", historyRoutes);
 
 app.get('/', (req, res) => res.send('Saraswati Club Backend')); 
 

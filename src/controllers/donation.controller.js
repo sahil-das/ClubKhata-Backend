@@ -1,15 +1,42 @@
-const Donation = require('../models/Donation');
+const Donation = require("../models/Donation");
 
 exports.list = async (req, res) => {
-  const donations = await Donation.find().lean().exec();
-  res.json({ donations });
+  try {
+    const { year } = req.query;
+
+    const donations = await Donation.find({ year }).sort({ date: -1 });
+
+    // normalize old records
+    const normalized = donations.map(d => ({
+      ...d.toObject(),
+      name: d.name || "Anonymous",
+    }));
+
+    res.json({
+      success: true,
+      donations: normalized,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
 };
 
 exports.create = async (req, res) => {
   try {
-    const d = await Donation.create(req.body);
-    res.status(201).json({ donation: d });
+    const { name, amount, date, year } = req.body;
+
+    await Donation.create({
+      name: name?.trim() || "Anonymous", // ✅ optional
+      amount,
+      date,
+      year,
+    });
+
+    res.json({
+      success: true,
+      message: "Donation added",
+    });
   } catch (err) {
-    res.status(400).json({ error: err.message });
+    res.status(500).json({ message: err.message });
   }
 };
