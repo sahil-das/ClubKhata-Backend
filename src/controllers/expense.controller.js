@@ -1,43 +1,35 @@
 const Expense = require("../models/Expense");
 
-/* ================= LIST ================= */
+/* ===== LIST ===== */
 exports.list = async (req, res) => {
-  try {
-    const { year } = req.query;
-
-    const expenses = await Expense.find({ year }).sort({ createdAt: -1 });
-
-    res.json({
-      success: true,
-      data: expenses,
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  const expenses = await Expense.find().sort({ createdAt: -1 });
+  res.json({ success: true, data: expenses });
 };
 
-/* ================= CREATE ================= */
+/* ===== CREATE ===== */
 exports.create = async (req, res) => {
   try {
-    const { title, amount, year } = req.body;
+    const { title, amount } = req.body;
 
-    await Expense.create({
+    if (!title || !amount) {
+      return res.status(400).json({ message: "Missing fields" });
+    }
+
+    const expense = await Expense.create({
       title,
       amount,
-      year,
+      addedBy: req.user.id, // ✅ FIX
       status: "pending",
     });
 
-    res.json({
-      success: true,
-      message: "Expense added",
-    });
+    res.json({ success: true, data: expense });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("expense create error", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
 
-/* ================= APPROVE ================= */
+/* ===== APPROVE ===== */
 exports.approve = async (req, res) => {
   try {
     const expense = await Expense.findById(req.params.id);
@@ -46,14 +38,35 @@ exports.approve = async (req, res) => {
       return res.status(404).json({ message: "Expense not found" });
     }
 
+    if (expense.status === "approved") {
+      return res.status(400).json({ message: "Already approved" });
+    }
+
     expense.status = "approved";
     await expense.save();
 
-    res.json({
-      success: true,
-      message: "Expense approved",
-    });
+    res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    console.error("approve error", err);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+/* ===== REJECT ===== */
+exports.reject = async (req, res) => {
+  try {
+    const expense = await Expense.findById(req.params.id);
+
+    if (!expense) {
+      return res.status(404).json({ message: "Expense not found" });
+    }
+
+    expense.status = "rejected";
+    await expense.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("reject error", err);
+    res.status(500).json({ message: "Server error" });
   }
 };

@@ -1,9 +1,13 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const reportCtrl = require('../controllers/report.controller');
-const auth = require('../middleware/auth.middleware');
+const auth = require("../middleware/auth.middleware");
+const reportCtrl = require("../controllers/reports.controller");
 
 router.use(auth);
-router.get('/summary', reportCtrl.getSummary);
+
+router.get("/weekly-total", reportCtrl.weeklyTotal);
+router.get("/donations-total", reportCtrl.donationTotal);
+router.get("/expenses-total", reportCtrl.expenseTotal);
+router.get("/puja-total", reportCtrl.pujaTotal);
 
 module.exports = router;

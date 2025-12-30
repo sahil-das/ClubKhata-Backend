@@ -13,7 +13,7 @@ const yearRoutes = require("./routes/year.routes");
 const historyRoutes = require("./routes/history.routes");
 const cycleRoutes = require("./routes/cycle.routes");
 const weeklyRoutes = require("./routes/weekly.routes");
-
+const financeRoutes = require("./routes/finance.routes");
 const app = express(); // ✅ THIS WAS MISSING
 
 /* ================= CORS ================= */
@@ -40,6 +40,8 @@ app.use("/api/years", yearRoutes);
 app.use("/api/history", historyRoutes);
 app.use("/api/cycles", cycleRoutes);
 app.use("/api/weekly", weeklyRoutes);
+app.use("/api/finance", financeRoutes);
+app.use("/api/puja-contributions", require("./routes/pujaContribution.routes"));
 
 /* ================= ROOT ================= */
 app.get("/", (req, res) => {

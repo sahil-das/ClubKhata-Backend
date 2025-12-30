@@ -4,7 +4,7 @@ const pujaCycleSchema = new mongoose.Schema(
   {
     name: {
       type: String,
-      required: true, // e.g. Saraswati Puja 2026
+      required: true, // e.g. "Saraswati Puja 2026"
     },
 
     startDate: {
@@ -14,27 +14,12 @@ const pujaCycleSchema = new mongoose.Schema(
 
     endDate: {
       type: Date,
-      required: true,
-    },
-
-    totalWeeks: {
-      type: Number,
-      required: true,
-    },
-
-    weeklyAmount: {
-      type: Number,
-      required: true,
+      required: true, // ✅ this was missing earlier
     },
 
     isActive: {
       type: Boolean,
-      default: true,
-    },
-
-    createdBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      default: false,
     },
   },
   { timestamps: true }

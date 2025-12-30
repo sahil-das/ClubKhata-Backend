@@ -2,20 +2,18 @@ const mongoose = require("mongoose");
 
 const donationSchema = new mongoose.Schema(
   {
-    name: {
+    donorName: {
       type: String,
+      trim: true,
       default: "Anonymous", // ✅ fallback
     },
     amount: {
       type: Number,
       required: true,
     },
-    date: {
-      type: Date,
-      required: true,
-    },
-    year: {
-      type: Number,
+    addedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
       required: true,
     },
   },

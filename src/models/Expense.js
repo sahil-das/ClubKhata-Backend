@@ -1,23 +1,24 @@
-// models/Expense.js
 const mongoose = require("mongoose");
 
 const expenseSchema = new mongoose.Schema({
-  title: String,
-  amount: Number,
-  year: Number,
-  date: {
-    type: Date,
-    default: Date.now
+  title: {
+    type: String,
+    required: true,
+  },
+  amount: {
+    type: Number,
+    required: true,
   },
   addedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
+    ref: "User",
+    required: true,
   },
   status: {
     type: String,
     enum: ["pending", "approved", "rejected"],
-    default: "pending"
-  }
-});
+    default: "pending",
+  },
+}, { timestamps: true });
 
 module.exports = mongoose.model("Expense", expenseSchema);

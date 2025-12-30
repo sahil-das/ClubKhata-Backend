@@ -1,16 +1,11 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const donationCtrl = require('../controllers/donation.controller');
-const auth = require('../middleware/auth.middleware');
-const checkYearOpen = require('../middleware/checkYearOpen');
+const auth = require("../middleware/auth.middleware");
+const donationCtrl = require("../controllers/donation.controller");
 
-// All routes require authentication
 router.use(auth);
 
-// READ donations (allowed even for closed years)
-router.get('/', donationCtrl.list);
-
-// CREATE donation (BLOCKED if year is closed)
-router.post('/', checkYearOpen, donationCtrl.create);
+router.get("/", donationCtrl.list);
+router.post("/", donationCtrl.create);
 
 module.exports = router;

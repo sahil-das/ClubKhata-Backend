@@ -1,42 +1,27 @@
 const Donation = require("../models/Donation");
 
+/* ===== LIST ===== */
 exports.list = async (req, res) => {
-  try {
-    const { year } = req.query;
+  const donations = await Donation.find()
+    .populate("addedBy", "name email")
+    .sort({ createdAt: -1 });
 
-    const donations = await Donation.find({ year }).sort({ date: -1 });
-
-    // normalize old records
-    const normalized = donations.map(d => ({
-      ...d.toObject(),
-      name: d.name || "Anonymous",
-    }));
-
-    res.json({
-      success: true,
-      donations: normalized,
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
+  res.json({ success: true, data: donations });
 };
 
+/* ===== CREATE ===== */
 exports.create = async (req, res) => {
-  try {
-    const { name, amount, date, year } = req.body;
+  const { donorName, amount } = req.body;
 
-    await Donation.create({
-      name: name?.trim() || "Anonymous", // ✅ optional
-      amount,
-      date,
-      year,
-    });
-
-    res.json({
-      success: true,
-      message: "Donation added",
-    });
-  } catch (err) {
-    res.status(500).json({ message: err.message });
+  if (!donorName || !amount) {
+    return res.status(400).json({ message: "All fields required" });
   }
+
+  const donation = await Donation.create({
+    donorName,
+    amount,
+    addedBy: req.user._id,
+  });
+
+  res.json({ success: true, data: donation });
 };

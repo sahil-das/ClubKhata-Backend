@@ -1,19 +1,21 @@
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-
-const expenseCtrl = require("../controllers/expense.controller");
-const auth = require("../middleware/auth.middleware");
-const adminOnly = require("../middleware/admin.middleware");
+const expenseCtrl = require('../controllers/expense.controller');
+const auth = require('../middleware/auth.middleware');
+const checkYearOpen = require('../middleware/checkYearOpen');
 
 router.use(auth);
 
-// LIST expenses
-router.get("/", expenseCtrl.list);
+// READ expenses (all years)
+router.get('/', expenseCtrl.list);
 
-// CREATE expense
-router.post("/", expenseCtrl.create);
+// CREATE expense (blocked if year closed)
+router.post('/', checkYearOpen, expenseCtrl.create);
 
-// APPROVE expense (ADMIN ONLY)
-router.put("/:id/approve", adminOnly, expenseCtrl.approve);
+// APPROVE expense (ADMIN, blocked if year closed)
+router.put('/:id/approve', checkYearOpen, expenseCtrl.approve);
+
+// REJECT expense (ADMIN, blocked if year closed)
+router.put('/:id/reject', checkYearOpen, expenseCtrl.reject);
 
 module.exports = router;

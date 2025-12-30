@@ -3,12 +3,27 @@ const weeklyController = require("../controllers/weekly.controller");
 const auth = require("../middleware/auth.middleware");
 const admin = require("../middleware/admin.middleware");
 
-router.post("/pay", auth, admin, weeklyController.pay);
-router.post("/undo/:id", auth, admin, weeklyController.undo);
+// get weekly status
 router.get(
-  "/member/:userId",
+  "/member/:memberId",
   auth,
-  weeklyController.memberStatus
+  weeklyController.getMemberWeeklyStatus
+);
+
+// mark paid (admin only)
+router.post(
+  "/mark-paid",
+  auth,
+  admin,
+  weeklyController.markWeekPaid
+);
+
+// undo paid (admin only)
+router.post(
+  "/undo-paid",
+  auth,
+  admin,
+  weeklyController.undoWeekPaid
 );
 
 module.exports = router;

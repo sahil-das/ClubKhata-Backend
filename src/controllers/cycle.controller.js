@@ -1,61 +1,25 @@
 const PujaCycle = require("../models/PujaCycle");
 
-/**
- * ================================
- * CREATE NEW PUJA CYCLE (ADMIN)
- * ================================
- * - Auto-calculates endDate
- * - Deactivates previous active cycle
- */
+/* ================= CREATE NEW CYCLE ================= */
 exports.create = async (req, res) => {
   try {
-    const {
-      name,
-      year,
-      startDate,
-      totalWeeks,
-      weeklyAmount,
-    } = req.body;
+    const { name, startDate, endDate } = req.body;
 
-    // --------- VALIDATION ----------
-    if (
-      !name ||
-      !year ||
-      !startDate ||
-      !totalWeeks ||
-      !weeklyAmount
-    ) {
+    if (!name || !startDate || !endDate) {
       return res.status(400).json({
-        message: "All fields are required",
+        message: "name, startDate and endDate are required",
       });
     }
 
-    // --------- DATE CALCULATION ----------
-    const start = new Date(startDate);
-    if (isNaN(start)) {
-      return res.status(400).json({
-        message: "Invalid startDate",
-      });
-    }
-
-    // endDate = startDate + (totalWeeks * 7 days)
-    const endDate = new Date(start);
-    endDate.setDate(start.getDate() + totalWeeks * 7);
-
-    // --------- DEACTIVATE OLD CYCLES ----------
     await PujaCycle.updateMany(
       { isActive: true },
       { isActive: false }
     );
 
-    // --------- CREATE CYCLE ----------
     const cycle = await PujaCycle.create({
       name,
-      year,
-      startDate: start,
+      startDate,
       endDate,
-      totalWeeks,
-      weeklyAmount,
       isActive: true,
     });
 
@@ -65,23 +29,14 @@ exports.create = async (req, res) => {
     });
   } catch (err) {
     console.error("Create cycle error:", err);
-    res.status(500).json({
-      message: "Failed to create cycle",
-    });
+    res.status(500).json({ message: "Failed to create cycle" });
   }
 };
 
-/**
- * ================================
- * GET ACTIVE PUJA CYCLE
- * ================================
- * - Used by frontend MemberDetails
- */
+/* ================= GET ACTIVE CYCLE ================= */
 exports.getActive = async (req, res) => {
   try {
-    const cycle = await PujaCycle.findOne({
-      isActive: true,
-    });
+    const cycle = await PujaCycle.findOne({ isActive: true });
 
     if (!cycle) {
       return res.status(404).json({
@@ -95,32 +50,20 @@ exports.getActive = async (req, res) => {
     });
   } catch (err) {
     console.error("Get active cycle error:", err);
-    res.status(500).json({
-      message: "Failed to fetch active cycle",
-    });
+    res.status(500).json({ message: "Failed to fetch active cycle" });
   }
 };
 
-/**
- * ================================
- * LIST ALL CYCLES (ADMIN)
- * ================================
- * - Used for history page
- */
+/* ================= LIST ALL CYCLES (ADMIN) ================= */
 exports.list = async (req, res) => {
   try {
-    const cycles = await PujaCycle.find().sort({
-      year: -1,
-    });
-
+    const cycles = await PujaCycle.find().sort({ createdAt: -1 });
     res.json({
       success: true,
       data: cycles,
     });
   } catch (err) {
     console.error("List cycles error:", err);
-    res.status(500).json({
-      message: "Failed to list cycles",
-    });
+    res.status(500).json({ message: "Failed to list cycles" });
   }
 };

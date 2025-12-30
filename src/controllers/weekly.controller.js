@@ -1,100 +1,100 @@
-const WeeklyContribution = require("../models/WeeklyContribution");
+const WeeklyPayment = require("../models/WeeklyPayment");
 const PujaCycle = require("../models/PujaCycle");
 
-/* ================= PAY WEEKLY CONTRIBUTION ================= */
-exports.pay = async (req, res) => {
-  const { userId, cycleId, weeks } = req.body;
+/* ================= GET MEMBER WEEKLY STATUS ================= */
+exports.getMemberWeeklyStatus = async (req, res) => {
+  try {
+    const { memberId } = req.params;
 
-  if (!userId || !cycleId || !weeks || weeks.length === 0) {
-    return res.status(400).json({
-      message: "Missing required data",
+    const cycle = await PujaCycle.findOne({ isActive: true });
+    if (!cycle) {
+      return res.status(404).json({ message: "No active cycle" });
+    }
+
+    let record = await WeeklyPayment.findOne({
+      member: memberId,
+      cycle: cycle._id,
     });
-  }
 
-  const cycle = await PujaCycle.findById(cycleId);
-  if (!cycle || !cycle.isActive) {
-    return res.status(400).json({
-      message: "Invalid or inactive Puja cycle",
+    if (!record) {
+      record = await WeeklyPayment.create({
+        member: memberId,
+        cycle: cycle._id,
+        weeks: Array.from({ length: cycle.totalWeeks || 52 }, (_, i) => ({
+          week: i + 1,
+          paid: false,
+          paidAt: null,
+        })),
+      });
+    }
+
+    res.json({
+      success: true,
+      cycle: {
+        name: cycle.name,
+        startDate: cycle.startDate,
+        endDate: cycle.endDate,
+      },
+      weeks: record.weeks,
     });
+  } catch (err) {
+    console.error("weekly status error", err);
+    res.status(500).json({ message: "Server error" });
   }
-
-  // Validate week numbers
-  const invalidWeek = weeks.find(
-    (w) => w < 1 || w > cycle.totalWeeks
-  );
-  if (invalidWeek) {
-    return res.status(400).json({
-      message: "Invalid week number",
-    });
-  }
-
-  const totalAmount = weeks.length * cycle.weeklyAmount;
-
-  const contribution = await WeeklyContribution.create({
-    user: userId,
-    cycle: cycleId,
-    weeks: weeks.map((w) => ({ weekNumber: w })),
-    totalAmount,
-    createdBy: req.user.id,
-  });
-
-  res.json({
-    success: true,
-    data: contribution,
-  });
 };
 
-/* ================= UNDO WEEKLY PAYMENT ================= */
-exports.undo = async (req, res) => {
-  const contribution = await WeeklyContribution.findById(
-    req.params.id
-  );
+/* ================= MARK PAID ================= */
+exports.markWeekPaid = async (req, res) => {
+  try {
+    const { memberId, weekNumber } = req.body;
 
-  if (!contribution || !contribution.isActive) {
-    return res.status(404).json({
-      message: "Contribution not found",
+    const cycle = await PujaCycle.findOne({ isActive: true });
+    if (!cycle) return res.status(404).json({ message: "No active cycle" });
+
+    const record = await WeeklyPayment.findOne({
+      member: memberId,
+      cycle: cycle._id,
     });
+
+    const week = record.weeks.find((w) => w.week === weekNumber);
+    if (!week) return res.status(404).json({ message: "Week not found" });
+
+    week.paid = true;
+    week.paidAt = new Date();
+
+    await record.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("mark paid error", err);
+    res.status(500).json({ message: "Server error" });
   }
-
-  contribution.isActive = false;
-  await contribution.save();
-
-  res.json({
-    success: true,
-    message: "Weekly contribution undone",
-  });
 };
 
-/* ================= MEMBER WEEKLY STATUS ================= */
-exports.memberStatus = async (req, res) => {
-  const { userId } = req.params;
+/* ================= UNDO PAID ================= */
+exports.undoWeekPaid = async (req, res) => {
+  try {
+    const { memberId, weekNumber } = req.body;
 
-  const cycle = await PujaCycle.findOne({ isActive: true });
-  if (!cycle) {
-    return res.status(404).json({
-      message: "No active Puja cycle",
+    const cycle = await PujaCycle.findOne({ isActive: true });
+    if (!cycle) return res.status(404).json({ message: "No active cycle" });
+
+    const record = await WeeklyPayment.findOne({
+      member: memberId,
+      cycle: cycle._id,
     });
+
+    const week = record.weeks.find((w) => w.week === weekNumber);
+    if (!week) return res.status(404).json({ message: "Week not found" });
+
+    week.paid = false;
+    week.paidAt = null;
+
+    await record.save();
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error("undo paid error", err);
+    res.status(500).json({ message: "Server error" });
   }
-
-  const records = await WeeklyContribution.find({
-    user: userId,
-    cycle: cycle._id,
-    isActive: true,
-  });
-
-  const paidWeeks = records.flatMap((r) =>
-    r.weeks.map((w) => w.weekNumber)
-  );
-
-  res.json({
-    success: true,
-    data: {
-      cycle: cycle.name,
-      totalWeeks: cycle.totalWeeks,
-      weeklyAmount: cycle.weeklyAmount,
-      paidWeeks,
-      remainingWeeks:
-        cycle.totalWeeks - paidWeeks.length,
-    },
-  });
 };
