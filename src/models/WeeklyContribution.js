@@ -1,28 +1,39 @@
-// models/WeeklyContribution.js
 const mongoose = require("mongoose");
 
 const weeklyContributionSchema = new mongoose.Schema({
-  member: {
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    required: true
+    required: true,
   },
-  year: {
-    type: Number,
-    required: true
-  },
-  weekNumber: {
-    type: Number,
-    required: true
-  },
-  amount: {
-    type: Number,
-    required: true
-  },
-  date: {
-    type: Date,
-    default: Date.now
-  }
-});
 
-module.exports = mongoose.model("WeeklyContribution", weeklyContributionSchema);
+  cycle: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "PujaCycle",
+    required: true,
+  },
+
+  weeks: [
+    {
+      weekNumber: Number,
+      paidAt: Date,
+    },
+  ],
+
+  totalAmount: Number,
+
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User", // admin
+  },
+
+  isActive: {
+    type: Boolean,
+    default: true, // undo support
+  },
+}, { timestamps: true });
+
+module.exports = mongoose.model(
+  "WeeklyContribution",
+  weeklyContributionSchema
+);

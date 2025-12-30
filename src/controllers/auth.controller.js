@@ -2,11 +2,14 @@ const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
+/**
+ * LOGIN
+ */
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // 1. Check input
+    // 1. Validate input
     if (!email || !password) {
       return res.status(400).json({
         message: "Email and password are required",
@@ -29,7 +32,7 @@ exports.login = async (req, res) => {
       });
     }
 
-    // 4. Generate JWT
+    // 4. Generate token
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
@@ -41,6 +44,7 @@ exports.login = async (req, res) => {
       token,
       user: {
         _id: user._id,
+        name: user.name,
         email: user.email,
         role: user.role,
       },
@@ -51,4 +55,14 @@ exports.login = async (req, res) => {
       message: "Login failed",
     });
   }
+};
+
+/**
+ * GET CURRENT USER (for refresh)
+ */
+exports.getMe = async (req, res) => {
+  res.json({
+    success: true,
+    user: req.user,
+  });
 };

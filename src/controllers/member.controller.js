@@ -1,31 +1,73 @@
 const User = require("../models/User");
 const bcrypt = require("bcryptjs");
 
+/**
+ * GET all members (admin only)
+ */
 exports.list = async (req, res) => {
   const members = await User.find({ role: "member" }).select("-password");
-  res.json({ success: true, data: members });
+  res.json({
+    success: true,
+    data: members,
+  });
 };
 
+/**
+ * CREATE member (admin only)
+ */
 exports.create = async (req, res) => {
-  const { email, password, role } = req.body;
+  const { name, email } = req.body;
+
+  // ✅ Validation
+  if (!name || !email) {
+    return res.status(400).json({
+      message: "Name and email are required",
+    });
+  }
 
   const exists = await User.findOne({ email });
   if (exists) {
-    return res.status(400).json({ message: "User already exists" });
+    return res.status(400).json({
+      message: "User already exists",
+    });
   }
 
-  const hashed = await bcrypt.hash(password, 10);
+  // 🔐 Auto-generate password (or you can accept input)
+  const rawPassword = "member123"; // later you can email this
+  const hashed = await bcrypt.hash(rawPassword, 10);
 
-  await User.create({
+  const member = await User.create({
+    name,
     email,
     password: hashed,
-    role,
+    role: "member", // 🔒 force role
   });
 
-  res.json({ message: "Member created" });
+  res.status(201).json({
+    success: true,
+    message: "Member created successfully",
+    data: {
+      id: member._id,
+      name: member.name,
+      email: member.email,
+    },
+  });
 };
 
+/**
+ * GET member details
+ */
 exports.details = async (req, res) => {
   const user = await User.findById(req.params.id).select("-password");
-  res.json(user);
+
+  if (!user) {
+    return res.status(404).json({
+      message: "Member not found",
+    });
+  }
+
+  res.json({
+    success: true,
+    data: user,
+  });
 };
