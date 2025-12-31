@@ -1,25 +1,20 @@
+// src/models/PujaCycle.js
 const mongoose = require("mongoose");
 
 const pujaCycleSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true, // e.g. "Saraswati Puja 2026"
-    },
+    name: { type: String, required: true },
+    startDate: Date,
+    endDate: Date,
+    totalWeeks: Number,
+    weeklyAmount: Number,
 
-    startDate: {
-      type: Date,
-      required: true,
-    },
+    isActive: { type: Boolean, default: false },
+    isClosed: { type: Boolean, default: false }, // 🔥 IMPORTANT
 
-    endDate: {
-      type: Date,
-      required: true, // ✅ this was missing earlier
-    },
-
-    isActive: {
-      type: Boolean,
-      default: false,
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
     },
   },
   { timestamps: true }

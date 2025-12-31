@@ -1,11 +1,17 @@
-const express = require("express");
-const router = express.Router();
+const router = require("express").Router();
 const auth = require("../middleware/auth.middleware");
-const historyCtrl = require("../controllers/history.controller");
+const admin = require("../middleware/admin.middleware");
+const historyController = require("../controllers/history.controller");
 
-router.use(auth);
+router.use(auth, admin);
 
-// GET year-wise history summary
-router.get("/:year", historyCtrl.getYearSummary);
+// SUMMARY
+router.get("/:year/summary", historyController.yearSummary);
+
+// DETAILS
+router.get("/:year/weekly", historyController.weekly);
+router.get("/:year/puja", historyController.puja);
+router.get("/:year/donations", historyController.donations);
+router.get("/:year/expenses", historyController.expenses);
 
 module.exports = router;

@@ -7,19 +7,22 @@ const pujaContributionSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+
+    cycle: {                      // ✅ THIS IS REQUIRED
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "PujaCycle",
+      required: true,
+    },
+
     amount: {
       type: Number,
       required: true,
-      min: 1,
     },
+
     addedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
-    },
-    date: {
-      type: Date,
-      default: Date.now,
     },
   },
   { timestamps: true }

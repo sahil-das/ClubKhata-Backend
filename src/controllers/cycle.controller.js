@@ -67,3 +67,31 @@ exports.list = async (req, res) => {
     res.status(500).json({ message: "Failed to list cycles" });
   }
 };
+
+/* ================= GET AVAILABLE YEARS (FOR HISTORY) ================= */
+exports.getYears = async (req, res) => {
+  try {
+    const cycles = await PujaCycle.find().select("startDate endDate");
+
+    const yearsSet = new Set();
+
+    cycles.forEach((cycle) => {
+      if (cycle.startDate) {
+        yearsSet.add(new Date(cycle.startDate).getFullYear());
+      }
+      if (cycle.endDate) {
+        yearsSet.add(new Date(cycle.endDate).getFullYear());
+      }
+    });
+
+    const years = Array.from(yearsSet).sort((a, b) => b - a);
+
+    res.json({
+      success: true,
+      data: years,
+    });
+  } catch (err) {
+    console.error("Get cycle years error:", err);
+    res.status(500).json({ message: "Failed to load years" });
+  }
+};

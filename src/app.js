@@ -42,6 +42,7 @@ app.use("/api/cycles", cycleRoutes);
 app.use("/api/weekly", weeklyRoutes);
 app.use("/api/finance", financeRoutes);
 app.use("/api/puja-contributions", require("./routes/pujaContribution.routes"));
+app.use("/api/settings", require("./routes/settings.routes"));
 
 /* ================= ROOT ================= */
 app.get("/", (req, res) => {

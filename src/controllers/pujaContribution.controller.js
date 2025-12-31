@@ -1,33 +1,49 @@
 const PujaContribution = require("../models/PujaContribution");
+const PujaCycle = require("../models/PujaCycle");
+const User = require("../models/User");
 
-const User = require("../models/User");     // required for populate
-
-/* ================= LIST ================= */
+/* ================= LIST (ACTIVE CYCLE ONLY) ================= */
 exports.list = async (req, res) => {
   try {
-    const data = await PujaContribution.find()
+    const cycle = await PujaCycle.findOne({ isActive: true }).lean();
+    if (!cycle) {
+      return res.json({ success: true, data: [] });
+    }
+
+    const data = await PujaContribution.find({
+      createdAt: {
+        $gte: new Date(cycle.startDate  ),
+        $lte: new Date(cycle.endDate),
+      },
+    })  
       .populate("member", "name email")
       .populate("addedBy", "name email")
-      .sort({ createdAt: -1 }); // ✅ FIXED
+      .sort({ createdAt: -1 });
 
-    res.json({
-      success: true,
-      data,
-    });
+    res.json({ success: true, data });
   } catch (err) {
     console.error("Puja list error:", err);
     res.status(500).json({ message: "Failed to load puja contributions" });
   }
 };
 
-/* ================= MEMBER TOTAL ================= */
+/* ================= MEMBER TOTAL (ACTIVE CYCLE) ================= */
 exports.memberTotal = async (req, res) => {
   try {
     const { memberId } = req.params;
 
+    const cycle = await PujaCycle.findOne({ isActive: true });
+    if (!cycle) {
+      return res.json({ success: true, total: 0, records: [] });
+    }
+
     const rows = await PujaContribution.find({
       member: memberId,
-    });
+      createdAt: {
+        $gte: new Date(cycle.startDate),
+        $lte: new Date(cycle.endDate),
+      },
+    }).sort({ createdAt: -1 });
 
     const total = rows.reduce((sum, r) => sum + r.amount, 0);
 
@@ -42,10 +58,18 @@ exports.memberTotal = async (req, res) => {
   }
 };
 
-/* ================= SUMMARY (ALL MEMBERS) ================= */
+/* ================= SUMMARY (ACTIVE CYCLE, ALL MEMBERS) ================= */
 exports.summary = async (req, res) => {
   try {
+    const cycle = await PujaCycle.findOne({ isActive: true });
+    if (!cycle) {
+      return res.json({ success: true, data: [] });
+    }
+
     const rows = await PujaContribution.aggregate([
+      {
+        $match: { cycle: cycle._id },
+      },
       {
         $group: {
           _id: "$member",
@@ -60,10 +84,7 @@ exports.summary = async (req, res) => {
       paid: r.total > 0,
     }));
 
-    res.json({
-      success: true,
-      data: result,
-    });
+    res.json({ success: true, data: result });
   } catch (err) {
     console.error("Puja summary error:", err);
     res.status(500).json({ message: "Server error" });
@@ -73,17 +94,29 @@ exports.summary = async (req, res) => {
 /* ================= CREATE ================= */
 exports.create = async (req, res) => {
   try {
-    // 🔥 FIX: accept memberId (frontend)
     const { memberId, amount } = req.body;
 
     if (!memberId || !amount) {
       return res.status(400).json({ message: "Missing fields" });
     }
 
+    const cycle = await PujaCycle.findOne({ isActive: true });
+    if (!cycle) {
+      return res.status(400).json({ message: "No active cycle" });
+    }
+
+    // 🔒 Prevent edits to closed year
+    if (cycle.isClosed) {
+      return res.status(403).json({
+        message: "This year is closed. Cannot add contribution.",
+      });
+    }
+
     const contribution = await PujaContribution.create({
-      member: memberId,          // ✅ mapped correctly
+      member: memberId,
       amount,
-      addedBy: req.user._id,     // from auth middleware
+      cycle: cycle._id,      // ✅ FIX
+      addedBy: req.user._id,
     });
 
     res.status(201).json({

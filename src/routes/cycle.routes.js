@@ -7,4 +7,7 @@ router.post("/", auth, admin, cycleController.create);
 router.get("/active", auth, cycleController.getActive);
 router.get("/", auth, admin, cycleController.list);
 
+/* 🔥 ADD THIS */
+router.get("/years", auth, cycleController.getYears);
+
 module.exports = router;

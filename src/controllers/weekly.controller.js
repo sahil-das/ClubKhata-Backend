@@ -6,7 +6,7 @@ exports.getMemberWeeklyStatus = async (req, res) => {
   try {
     const { memberId } = req.params;
 
-    const cycle = await PujaCycle.findOne({ isActive: true });
+    const cycle = await PujaCycle.findOne({ isActive: true }).lean();
     if (!cycle) {
       return res.status(404).json({ message: "No active cycle" });
     }
@@ -20,17 +20,21 @@ exports.getMemberWeeklyStatus = async (req, res) => {
       record = await WeeklyPayment.create({
         member: memberId,
         cycle: cycle._id,
-        weeks: Array.from({ length: cycle.totalWeeks || 52 }, (_, i) => ({
-          week: i + 1,
-          paid: false,
-          paidAt: null,
-        })),
+        weeks: Array.from(
+          { length: cycle.totalWeeks || 52 },
+          (_, i) => ({
+            week: i + 1,
+            paid: false,
+            paidAt: null,
+          })
+        ),
       });
     }
 
     res.json({
       success: true,
       cycle: {
+        id: cycle._id,               // ✅ IMPORTANT
         name: cycle.name,
         startDate: cycle.startDate,
         endDate: cycle.endDate,
@@ -49,15 +53,23 @@ exports.markWeekPaid = async (req, res) => {
     const { memberId, weekNumber } = req.body;
 
     const cycle = await PujaCycle.findOne({ isActive: true });
-    if (!cycle) return res.status(404).json({ message: "No active cycle" });
+    if (!cycle) {
+      return res.status(404).json({ message: "No active cycle" });
+    }
 
     const record = await WeeklyPayment.findOne({
       member: memberId,
       cycle: cycle._id,
     });
 
+    if (!record) {
+      return res.status(404).json({ message: "Weekly record not found" });
+    }
+
     const week = record.weeks.find((w) => w.week === weekNumber);
-    if (!week) return res.status(404).json({ message: "Week not found" });
+    if (!week) {
+      return res.status(404).json({ message: "Week not found" });
+    }
 
     week.paid = true;
     week.paidAt = new Date();
@@ -77,15 +89,23 @@ exports.undoWeekPaid = async (req, res) => {
     const { memberId, weekNumber } = req.body;
 
     const cycle = await PujaCycle.findOne({ isActive: true });
-    if (!cycle) return res.status(404).json({ message: "No active cycle" });
+    if (!cycle) {
+      return res.status(404).json({ message: "No active cycle" });
+    }
 
     const record = await WeeklyPayment.findOne({
       member: memberId,
       cycle: cycle._id,
     });
 
+    if (!record) {
+      return res.status(404).json({ message: "Weekly record not found" });
+    }
+
     const week = record.weeks.find((w) => w.week === weekNumber);
-    if (!week) return res.status(404).json({ message: "Week not found" });
+    if (!week) {
+      return res.status(404).json({ message: "Week not found" });
+    }
 
     week.paid = false;
     week.paidAt = null;
