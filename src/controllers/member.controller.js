@@ -16,42 +16,63 @@ exports.list = async (req, res) => {
  * CREATE member (admin only)
  */
 exports.create = async (req, res) => {
-  const { name, email } = req.body;
+  try {
+    const { name, email, password } = req.body;
 
-  // ✅ Validation
-  if (!name || !email) {
-    return res.status(400).json({
-      message: "Name and email are required",
+    /* ================= VALIDATION ================= */
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        message: "Name, email and password are required",
+      });
+    }
+
+    // ✅ Force domain
+    if (!email.endsWith("@clubname.com")) {
+      return res.status(400).json({
+        message: "Email must be @clubname.com",
+      });
+    }
+
+    // ✅ Unique email
+    const exists = await User.findOne({ email });
+    if (exists) {
+      return res.status(400).json({
+        message: "User already exists",
+      });
+    }
+
+    /* ================= PASSWORD ================= */
+    if (password.length < 6) {
+      return res.status(400).json({
+        message: "Password must be at least 6 characters",
+      });
+    }
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    /* ================= CREATE ================= */
+    const member = await User.create({
+      name,
+      email: email.toLowerCase(),
+      password: hashed,
+      role: "member", // 🔒 forced
+    });
+
+    res.status(201).json({
+      success: true,
+      message: "Member created successfully",
+      data: {
+        id: member._id,
+        name: member.name,
+        email: member.email,
+      },
+    });
+  } catch (err) {
+    console.error("Member create error:", err);
+    res.status(500).json({
+      message: "Server error",
     });
   }
-
-  const exists = await User.findOne({ email });
-  if (exists) {
-    return res.status(400).json({
-      message: "User already exists",
-    });
-  }
-
-  // 🔐 Auto-generate password (or you can accept input)
-  const rawPassword = "member123"; // later you can email this
-  const hashed = await bcrypt.hash(rawPassword, 10);
-
-  const member = await User.create({
-    name,
-    email,
-    password: hashed,
-    role: "member", // 🔒 force role
-  });
-
-  res.status(201).json({
-    success: true,
-    message: "Member created successfully",
-    data: {
-      id: member._id,
-      name: member.name,
-      email: member.email,
-    },
-  });
 };
 
 /**
