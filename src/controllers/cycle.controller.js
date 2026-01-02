@@ -17,14 +17,19 @@ exports.create = async (req, res) => {
     await PujaCycle.updateMany({ isActive: true }, { isActive: false });
 
     // 2. Auto-detect Opening Balance if not provided
-    // Logic: Look for the most recently closed cycle and take its closingBalance
     let finalOpeningBalance = openingBalance;
-    
-    if (finalOpeningBalance === undefined || finalOpeningBalance === null) {
-      const lastClosedCycle = await PujaCycle.findOne({ isClosed: true })
-        .sort({ endDate: -1 }); // Get latest finished cycle
+
+    // FIX: Treat empty string "" as undefined so it triggers the lookup
+    if (finalOpeningBalance === undefined || finalOpeningBalance === null || finalOpeningBalance === "") {
       
+      // Find the most recently closed cycle
+      const lastClosedCycle = await PujaCycle.findOne({ isClosed: true })
+        .sort({ endDate: -1 }); // Sort by latest end date
+      
+      // If found, use its closing balance. If not (first year), use 0.
       finalOpeningBalance = lastClosedCycle ? (lastClosedCycle.closingBalance || 0) : 0;
+      
+      console.log(`Auto-detected Opening Balance: ₹${finalOpeningBalance} (from cycle: ${lastClosedCycle?.name || 'None'})`);
     }
 
     // 3. Create the new cycle
@@ -32,10 +37,10 @@ exports.create = async (req, res) => {
       name,
       startDate,
       endDate,
-      weeklyAmount: Number(weeklyAmount) || 0, // Store standard rate for this year
+      weeklyAmount: Number(weeklyAmount) || 0,
       totalWeeks: Number(totalWeeks) || 52,
-      openingBalance: Number(finalOpeningBalance),
-      isActive: true, // Auto-activate new cycle
+      openingBalance: Number(finalOpeningBalance), // Now correctly set
+      isActive: true,
       isClosed: false,
     });
 
@@ -50,7 +55,6 @@ exports.create = async (req, res) => {
     res.status(500).json({ message: "Failed to create cycle" });
   }
 };
-
 /* ================= CLOSE ACTIVE CYCLE (End of Year) ================= */
 exports.closeActiveCycle = async (req, res) => {
   try {
