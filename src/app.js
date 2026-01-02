@@ -16,12 +16,19 @@ const financeRoutes = require("./routes/finance.routes");
 const app = express(); // ✅ THIS WAS MISSING
 
 /* ================= CORS ================= */
+// ... imports
+
 app.use(
   cors({
-    origin: "http://localhost:5173",
+    origin: [
+      "http://localhost:5173",       // Keep localhost for your laptop
+      "http://10.155.91.46:5173"     // ✅ Add your Phone/Network IP
+    ],
     credentials: true,
   })
 );
+
+// ... rest of code
 
 app.use(express.json());
 

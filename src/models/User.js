@@ -1,4 +1,4 @@
-// models/User.js
+// src/models/User.js
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
@@ -14,6 +14,11 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
     },
+    // ✅ ADD THIS SECTION
+    phone: {
+      type: String,
+      default: "", 
+    },
     password: {
       type: String,
       required: true,
@@ -26,6 +31,5 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
 
 module.exports = mongoose.model("User", userSchema);
