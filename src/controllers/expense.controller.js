@@ -1,16 +1,17 @@
 const Expense = require("../models/Expense");
 const FestivalYear = require("../models/FestivalYear");
 
+// 1. ADD EXPENSE
 exports.addExpense = async (req, res) => {
   try {
     const { title, amount, category, description, date } = req.body;
-    const { clubId, role } = req.user; // Role comes from auth middleware
+    const { clubId, role } = req.user; 
 
     // Get Active Year
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(400).json({ message: "No active festival year." });
 
-    // 🧠 LOGIC: Admins approve instantly, Members stay pending
+    // Admins approve instantly, Members stay pending
     const initialStatus = role === "admin" ? "approved" : "pending";
 
     const newExpense = await Expense.create({
@@ -21,7 +22,7 @@ exports.addExpense = async (req, res) => {
       category,
       description,
       date: date || new Date(),
-      status: initialStatus, // 👈 Set status based on role
+      status: initialStatus,
       recordedBy: req.user.id
     });
 
@@ -36,11 +37,11 @@ exports.addExpense = async (req, res) => {
   }
 };
 
-// 2. APPROVE / REJECT EXPENSE (Admins Only)
+// 2. APPROVE / REJECT EXPENSE
 exports.updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body; // "approved" or "rejected"
+    const { status } = req.body; 
 
     if (req.user.role !== "admin") {
       return res.status(403).json({ message: "Only Admins can approve expenses." });
@@ -59,11 +60,24 @@ exports.updateStatus = async (req, res) => {
   }
 };
 
-// 3. GET EXPENSES (Allow filtering)
+// 3. GET EXPENSES (Fixed: Only show Active Year)
 exports.getExpenses = async (req, res) => {
   try {
-    // Sort by Date (Newest first)
-    const expenses = await Expense.find({ club: req.user.clubId })
+    const { clubId } = req.user;
+
+    // ✅ FIX: Find the Active Year first
+    const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
+
+    // If no active year (closed), return empty list (clears the UI)
+    if (!activeYear) {
+      return res.json({ success: true, data: [] });
+    }
+
+    // ✅ FIX: Filter expenses by this Active Year ID
+    const expenses = await Expense.find({ 
+        club: clubId,
+        year: activeYear._id 
+      })
       .populate("recordedBy", "name")
       .sort({ date: -1 });
       
@@ -72,6 +86,8 @@ exports.getExpenses = async (req, res) => {
     res.status(500).json({ message: "Server Error" });
   }
 };
+
+// 4. DELETE EXPENSE
 exports.deleteExpense = async (req, res) => {
   try {
     await Expense.findOneAndDelete({ _id: req.params.id, club: req.user.clubId });
