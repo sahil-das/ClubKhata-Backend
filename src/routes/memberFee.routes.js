@@ -5,8 +5,16 @@ const authMiddleware = require("../middleware/auth.middleware");
 
 router.use(authMiddleware);
 
+// Record Payment
 router.post("/", controller.createPayment);
-router.get("/", controller.getAllFees);
-router.delete("/:id", controller.deletePayment);
 
+// Get List (Logs)
+router.get("/", controller.getAllFees);
+
+// ✅ NEW: Get Collection Matrix (Members + Paid Status)
+router.get("/summary", controller.getFeeSummary);
+
+// Delete
+router.delete("/:id", controller.deletePayment);
+router.get("/member/:userId", controller.getMemberFees);
 module.exports = router;

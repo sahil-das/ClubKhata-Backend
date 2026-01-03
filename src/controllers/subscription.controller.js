@@ -15,11 +15,13 @@ exports.getMemberSubscription = async (req, res) => {
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(400).json({ message: "No active year found. Please start a year in Dashboard." });
 
-    // 2. Fetch Membership & User Details (Fixes "Loading..." Name issue)
+    // 2. Fetch Membership & User Details
     const memberShip = await Membership.findById(memberId).populate("user");
     if (!memberShip) return res.status(404).json({ message: "Member not found" });
 
+    // ✅ FIX: Capture User ID and Name safely
     const memberName = memberShip.user ? memberShip.user.name : "Unknown Member";
+    const memberUserId = memberShip.user ? memberShip.user._id : null; 
 
     // 3. Find Subscription
     let sub = await Subscription.findOne({ 
@@ -51,22 +53,17 @@ exports.getMemberSubscription = async (req, res) => {
         totalDue: targetCount * targetAmount
       });
     } else {
-      // 5. DATA REPAIR: If amount is 0 but it shouldn't be, FIX IT NOW
-      // We check if the saved amount is different from the Year settings
+      // 5. DATA REPAIR
       const needsUpdate = sub.installments.some(i => i.amountExpected !== targetAmount);
       
       if (needsUpdate && targetAmount > 0) {
-        // Update all installments to the correct amount
-        sub.installments.forEach(i => {
-           i.amountExpected = targetAmount;
-        });
+        sub.installments.forEach(i => { i.amountExpected = targetAmount; });
         
-        // Recalculate totals
         const paidCount = sub.installments.filter(i => i.isPaid).length;
         sub.totalPaid = paidCount * targetAmount;
         sub.totalDue = (sub.installments.length * targetAmount) - sub.totalPaid;
         
-        await sub.save(); // Save the fixed data
+        await sub.save();
       }
     }
 
@@ -74,8 +71,10 @@ exports.getMemberSubscription = async (req, res) => {
       success: true,
       data: {
         subscription: sub,
-        memberName: memberName, // ✅ Correct Name
+        memberName: memberName,
+        memberUserId: memberUserId, // 👈 CRITICAL FIX: Sending User ID to Frontend
         rules: {
+          name: activeYear.name,
           frequency: activeYear.subscriptionFrequency,
           amount: targetAmount
         }
@@ -97,10 +96,12 @@ exports.payInstallment = async (req, res) => {
     
     const sub = await Subscription.findById(subscriptionId);
     if (!sub) return res.status(404).json({ message: "Subscription not found" });
-    // 🔒 SECURITY CHECK: Only Admins can collect money
+
+    // 🔒 SECURITY CHECK
     if (req.user.role !== "admin") {
       return res.status(403).json({ message: "Only Admins can update payments." });
     }
+
     const installment = sub.installments.find(i => i.number === installmentNumber);
     if (!installment) return res.status(404).json({ message: "Invalid Installment" });
 

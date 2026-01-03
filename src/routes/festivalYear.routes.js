@@ -9,5 +9,6 @@ router.use(authMiddleware);
 router.post("/", controller.createYear);        // Create new cycle
 router.get("/", controller.getAllYears);        // List history
 router.get("/active", controller.getActiveYear);// Get current context
-
+router.put("/:id", controller.updateYear);
+router.post("/:id/close", controller.closeYear);
 module.exports = router;
