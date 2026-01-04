@@ -1,6 +1,6 @@
 const Donation = require("../models/Donation");
 const FestivalYear = require("../models/FestivalYear");
-
+const { logAction } = require("../utils/auditLogger");
 /**
  * @route POST /api/v1/donations
  * @desc Add a new public donation
@@ -25,6 +25,13 @@ exports.addDonation = async (req, res) => {
       receiptNo,
       date: date || new Date(),
       collectedBy: userId
+    });
+
+    await logAction({
+      req,
+      action: "DONATION_RECEIVED",
+      target: `Donor: ${donorName}`,
+      details: { amount: amount, receipt: receiptNo }
     });
 
     res.status(201).json({ success: true, message: "Donation added", data: donation });
@@ -68,6 +75,14 @@ exports.deleteDonation = async (req, res) => {
     const donation = await Donation.findOneAndDelete({ 
       _id: req.params.id, 
       club: req.user.clubId 
+    });
+
+    // ✅ LOG DELETION
+    await logAction({
+      req,
+      action: "DONATION_DELETED",
+      target: `Deleted Donation: ${donation.donorName}`,
+      details: { amount: donation.amount }
     });
 
     if (!donation) return res.status(404).json({ message: "Donation not found" });

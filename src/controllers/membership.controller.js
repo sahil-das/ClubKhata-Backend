@@ -5,6 +5,7 @@ const FestivalYear = require("../models/FestivalYear");
 const Subscription = require("../models/Subscription");
 const MemberFee = require("../models/MemberFee");
 const mongoose = require("mongoose");
+const { logAction } = require("../utils/auditLogger");
 /**const FestivalYear = require("../models/FestivalYear");
 const Subscription = require("../models/Subscription");
  * @route GET /api/v1/members
@@ -92,6 +93,15 @@ exports.addMember = async (req, res) => {
       role: role || "member",
       status: "active"
     });
+    // ✅ FIX: Safely access the name
+    const memberName = user ? user.name : "Unknown Member";
+    // ✅ LOG: MEMBER ADDED
+    await logAction({
+      req,
+      action: "MEMBER_ADDED",
+      target: `New Member: ${memberName}`,
+      details: { email, role: role || "member" }
+    });
 
     res.status(201).json({ 
       success: true, 
@@ -118,20 +128,34 @@ exports.removeMember = async (req, res) => {
     const { id: membershipId } = req.params;
     const { clubId } = req.user;
 
-    // Delete the LINK, not the User
-    const result = await Membership.findOneAndDelete({ 
-      _id: membershipId, 
-      club: clubId 
-    });
+    // 1. Find Member first to get Name (Need to populate 'user' to get the name/email)
+    const memberToDelete = await Membership.findOne({ _id: membershipId, club: clubId })
+      .populate("user", "name email");
 
-    if (!result) return res.status(404).json({ message: "Member not found" });
+    if (!memberToDelete) {
+      return res.status(404).json({ message: "Member not found" });
+    }
+
+    // 2. Delete the Membership
+    await Membership.findByIdAndDelete(membershipId);
+
+    // ✅ LOG: MEMBER REMOVED (Fixed Action & Variables)
+    await logAction({
+      req,
+      action: "MEMBER_REMOVED",
+      target: `Removed: ${memberToDelete.user?.name || "Unknown"}`,
+      details: { 
+        email: memberToDelete.user?.email,
+        role: memberToDelete.role 
+      }
+    });
 
     res.json({ success: true, message: "Member removed from club" });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: "Server error" });
   }
 };
-
 /**
  * @route PUT /api/v1/members/:id/role
  * @desc Change a member's role (e.g. Member -> Admin)
@@ -139,7 +163,7 @@ exports.removeMember = async (req, res) => {
 exports.updateRole = async (req, res) => {
   try {
     const { id: membershipId } = req.params;
-    const { role } = req.body; // "admin" or "member"
+    const { role } = req.body; 
     const { clubId } = req.user;
 
     // 🔒 1. Security: Only Admins can do this
@@ -151,7 +175,6 @@ exports.updateRole = async (req, res) => {
     if (role !== "admin") {
       const adminCount = await Membership.countDocuments({ club: clubId, role: "admin" });
       if (adminCount <= 1) {
-        // Check if the user being demoted is actually an admin
         const targetMember = await Membership.findById(membershipId);
         if (targetMember && targetMember.role === "admin") {
            return res.status(400).json({ message: "Cannot demote the last admin." });
@@ -159,16 +182,27 @@ exports.updateRole = async (req, res) => {
       }
     }
 
-    // 3. Update the Role
+    // 3. Update the Role and POPULATE user details immediately
     const updatedMember = await Membership.findOneAndUpdate(
       { _id: membershipId, club: clubId },
       { role: role },
       { new: true }
-    );
+    ).populate("user", "name"); // 👈 Ensure we fetch the name
 
     if (!updatedMember) return res.status(404).json({ message: "Member not found" });
 
-    res.json({ success: true, message: "Role updated successfully", data: updatedMember });
+    // ✅ FIX: Safely access the name
+    const memberName = updatedMember.user ? updatedMember.user.name : "Unknown Member";
+
+    // ✅ LOG: ROLE CHANGE
+    await logAction({
+      req,
+      action: "ROLE_UPDATED",
+      target: `Role Change: ${memberName}`,
+      details: { newRole: role }
+    });
+
+    res.json({ success: true, message: "Role updated", data: updatedMember });
 
   } catch (err) {
     console.error("Update Role Error:", err);

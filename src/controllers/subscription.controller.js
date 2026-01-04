@@ -2,7 +2,7 @@ const Subscription = require("../models/Subscription");
 const FestivalYear = require("../models/FestivalYear");
 const Membership = require("../models/Membership");
 const User = require("../models/User");
-
+const { logAction } = require("../utils/auditLogger");
 /**
  * @desc Get Subscription Card & Self-Heal Data
  */
@@ -131,6 +131,15 @@ exports.payInstallment = async (req, res) => {
     sub.totalDue = newDue;
 
     await sub.save();
+
+    // ✅ LOG THE ACTION
+    const memberName = sub.member?.user?.name || "Member";
+    await logAction({
+      req,
+      action: newStatus ? "SUBSCRIPTION_PAID" : "SUBSCRIPTION_REVOKED",
+      target: `Sub: ${memberName} (Week #${installmentNumber})`,
+      details: { amount: installment.amountExpected, status: newStatus ? "Paid" : "Unpaid" }
+    });
 
     res.json({ success: true, data: sub });
 

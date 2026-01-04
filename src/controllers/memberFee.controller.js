@@ -1,7 +1,9 @@
 const MemberFee = require("../models/MemberFee");
 const FestivalYear = require("../models/FestivalYear");
 const Membership = require("../models/Membership");
+const User = require("../models/User"); // 👈 ADDED THIS IMPORT
 const { logAction } = require("../utils/auditLogger");
+
 /**
  * @route POST /api/v1/member-fees
  * @desc Record a payment (Chanda)
@@ -19,6 +21,10 @@ exports.createPayment = async (req, res) => {
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(404).json({ message: "No active festival year." });
 
+    // ✅ FETCH USER NAME FOR LOGS (Now this will work)
+    const userObj = await User.findById(userId);
+    const memberName = userObj ? userObj.name : "Unknown Member";
+
     const fee = await MemberFee.create({
       club: clubId,
       year: activeYear._id,
@@ -32,7 +38,7 @@ exports.createPayment = async (req, res) => {
     await logAction({
       req,
       action: "PAYMENT_COLLECTED",
-      target: `User ID: ${userId}`,
+      target: `Chanda: ${memberName}`,
       details: { amount: amount, notes: notes }
     });
     
@@ -42,6 +48,7 @@ exports.createPayment = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
 /**
  * @route GET /api/v1/member-fees
  * @desc Get raw list of transactions (for history/logs)
@@ -127,14 +134,32 @@ exports.getFeeSummary = async (req, res) => {
  */
 exports.deletePayment = async (req, res) => {
   try {
-    const fee = await MemberFee.findOneAndDelete({ _id: req.params.id, club: req.user.clubId });
+    // 1. Find the fee first (so we can log what we are deleting)
+    const fee = await MemberFee.findOne({ _id: req.params.id, club: req.user.clubId })
+      .populate("user", "name"); // Get name for the log
+
     if (!fee) return res.status(404).json({ message: "Record not found" });
+
+    // 2. Delete it
+    await MemberFee.findByIdAndDelete(fee._id);
+
+    // ✅ LOG THE DELETION
+    await logAction({
+      req,
+      action: "PAYMENT_DELETED",
+      target: `Deleted Chanda: ${fee.user?.name || "Unknown User"}`,
+      details: { 
+        amount: fee.amount, 
+        originalDate: fee.createdAt 
+      }
+    });
+
     res.json({ success: true, message: "Record deleted" });
   } catch (err) {
+    console.error(err); // 👈 Added error logging
     res.status(500).json({ message: "Server error" });
   }
 };
-
 
 // ✅ NEW: Get fees for a specific member (for MemberDetails page)
 exports.getMemberFees = async (req, res) => {

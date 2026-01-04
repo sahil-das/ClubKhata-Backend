@@ -1,7 +1,12 @@
 const FestivalYear = require("../models/FestivalYear");
 const calculateBalance = require("../utils/calculateBalance"); 
 const Subscription = require("../models/Subscription");
+const { logAction } = require("../utils/auditLogger"); // 👈 IMPORT LOGGER
 
+/**
+ * @desc Start a New Festival Year
+ * @route POST /api/v1/festival-years
+ */
 exports.createYear = async (req, res) => {
   try {
     const { 
@@ -33,7 +38,6 @@ exports.createYear = async (req, res) => {
     let derivedBalance = 0;
 
     if (lastYear) {
-       // ... (Balance Logic remains same) ...
        if (lastYear.isClosed) {
           derivedBalance = lastYear.closingBalance;
        } else {
@@ -63,14 +67,23 @@ exports.createYear = async (req, res) => {
       endDate,
       openingBalance: finalOpeningBalance,
       subscriptionFrequency: frequency,
-      
-      // ✅ Use the calculated value
       totalInstallments: finalInstallments,
-      
       amountPerInstallment: frequency === 'none' ? 0 : (Number(amountPerInstallment) || 0),
       isActive: true,
       isClosed: false,
       createdBy: userId
+    });
+
+    // ✅ LOG: YEAR STARTED
+    await logAction({
+      req,
+      action: "YEAR_STARTED",
+      target: `New Cycle: ${name}`,
+      details: { 
+        openingBalance: finalOpeningBalance, 
+        frequency: frequency,
+        totalWeeks: finalInstallments // ✅ Log initial weeks
+      }
     });
 
     res.status(201).json({
@@ -84,7 +97,10 @@ exports.createYear = async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 };
-// ... (Keep existing exports: getAllYears, getActiveYear, updateYear, closeYear) ...
+
+/**
+ * @desc Get All Years
+ */
 exports.getAllYears = async (req, res) => {
     try {
       const years = await FestivalYear.find({ club: req.user.clubId }).sort({ startDate: -1 });
@@ -92,6 +108,9 @@ exports.getAllYears = async (req, res) => {
     } catch (err) { res.status(500).json({ message: "Server error" }); }
 };
 
+/**
+ * @desc Get Currently Active Year
+ */
 exports.getActiveYear = async (req, res) => {
     try {
       const activeYear = await FestivalYear.findOne({ club: req.user.clubId, isActive: true });
@@ -100,10 +119,10 @@ exports.getActiveYear = async (req, res) => {
     } catch (err) { res.status(500).json({ message: "Server error" }); }
 };
 
+/**
+ * @desc Update Year Settings
+ */
 exports.updateYear = async (req, res) => {
-  // ❌ REMOVED: const session = await FestivalYear.startSession();
-  // ❌ REMOVED: session.startTransaction();
-
   try {
     const { id } = req.params;
     const { clubId } = req.user;
@@ -112,7 +131,7 @@ exports.updateYear = async (req, res) => {
       subscriptionFrequency, totalInstallments, amountPerInstallment 
     } = req.body;
 
-    // 1. Fetch Year (No Session)
+    // 1. Fetch Year
     const yearDoc = await FestivalYear.findOne({ _id: id, club: clubId });
     if (!yearDoc) throw new Error("Year not found");
 
@@ -176,13 +195,67 @@ exports.updateYear = async (req, res) => {
         });
     }
 
-    await yearDoc.save(); // ❌ REMOVED: { session }
+    await yearDoc.save();
+
+    // ✅ LOG: YEAR SETTINGS UPDATED (Now includes Total Weeks)
+    await logAction({
+      req,
+      action: "YEAR_UPDATED",
+      target: `Settings: ${yearDoc.name}`,
+      details: { 
+        amount: newAmount,
+        frequency: newFreq,
+        totalWeeks: newTotal // 👈 ADDED HERE
+      }
+    });
 
     res.json({ success: true, data: yearDoc, message: "Settings updated successfully." });
 
   } catch (err) {
     console.error("Update Year Error:", err);
     res.status(400).json({ message: err.message });
+  }
+};
+
+/**
+ * @desc Close Year Permanently
+ */
+exports.closeYear = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { clubId } = req.user;
+
+    // 1. Find the year
+    const year = await FestivalYear.findOne({ _id: id, club: clubId });
+    if (!year) return res.status(404).json({ message: "Year not found" });
+
+    // 2. Calculate Final Balance one last time
+    const finalBalance = await calculateBalance(year._id, year.openingBalance);
+
+    // 3. Save updates
+    year.isActive = false;
+    year.isClosed = true;
+    year.closingBalance = finalBalance; // ✅ STORED PERMANENTLY
+    
+    await year.save();
+
+    // ✅ LOG: YEAR CLOSED
+    await logAction({
+      req,
+      action: "YEAR_CLOSED",
+      target: `Closed Cycle: ${year.name}`,
+      details: { finalBalance: finalBalance }
+    });
+
+    res.json({ 
+      success: true, 
+      message: `Year '${year.name}' closed. Final Balance: ₹${finalBalance} saved.`,
+      data: year
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server Error" });
   }
 };
 
@@ -236,7 +309,7 @@ async function adjustSubscriptions({ yearId, newFreq, newTotal, newAmount }) {
         sub.totalPaid = totalPaid; 
         sub.totalDue = totalDue;
         
-        await sub.save(); // ❌ REMOVED: { session }
+        await sub.save();
     }
 }
 
@@ -253,175 +326,3 @@ function generateInstallments(count, amount, startNumber = 1) {
     }
     return arr;
 }
-/**
- * 🛠 HELPER: Adjusts Subscriptions intelligently
- * - Handles Appending (Extension)
- * - Handles Truncating (Reduction)
- * - Handles Amount Updates
- */
-async function adjustSubscriptions({ yearId, newFreq, newTotal, newAmount, session }) {
-    
-    const subs = await Subscription.find({ year: yearId }).session(session);
-    if (subs.length === 0) return;
-
-    console.log(`🔄 Adjusting ${subs.length} subs: Freq=${newFreq}, Total=${newTotal}, Amt=${newAmount}`);
-
-    for (const sub of subs) {
-        let installments = sub.installments;
-
-        // CASE 1: Frequency Changed (Only possible if NO PAYMENTS existed)
-        // We can safely wipe and regenerate
-        // (Or if newFreq is 'none', we wipe)
-        if (newFreq === 'none') {
-            installments = [];
-        } 
-        else if (installments.length === 0 && newFreq !== 'none') {
-            // Was 'none', now 'weekly/monthly' -> Generate fresh
-            installments = generateInstallments(newTotal, newAmount);
-        }
-        else {
-            // CASE 2: Duration Change (Weekly -> Weekly)
-            
-            // A. EXTEND (52 -> 60)
-            if (newTotal > installments.length) {
-                const startNum = installments.length + 1;
-                const addedCount = newTotal - installments.length;
-                const newItems = generateInstallments(addedCount, newAmount, startNum);
-                installments = [...installments, ...newItems];
-            }
-            // B. REDUCE (52 -> 40) - We already validated safety above
-            else if (newTotal < installments.length) {
-                installments = installments.slice(0, newTotal);
-            }
-
-            // C. UPDATE AMOUNTS
-            // Update expected amount for ALL installments to match new rate
-            // (Standard SaaS logic: if price changes, it reflects on grid)
-            installments = installments.map(inst => ({
-                ...inst,
-                amountExpected: newAmount
-            }));
-        }
-
-        // Recalculate Totals
-        // totalPaid is sum of isPaid items (amountExpected might have changed, 
-        // but usually we trust the transaction log. For simple logic, we sum the NEW amountExpected of paid items)
-        // actually, keeping original payment value is complex without a transaction ledger. 
-        // For this system, we assume: Paid is Paid. 
-        
-        const totalPaid = installments.filter(i => i.isPaid).reduce((sum, i) => sum + i.amountExpected, 0);
-        const totalDue = installments.filter(i => !i.isPaid).reduce((sum, i) => sum + i.amountExpected, 0);
-
-        sub.installments = installments;
-        sub.totalPaid = totalPaid; 
-        sub.totalDue = totalDue;
-        
-        await sub.save({ session });
-    }
-}
-
-function generateInstallments(count, amount, startNumber = 1) {
-    const arr = [];
-    for (let i = 0; i < count; i++) {
-        arr.push({
-            number: startNumber + i,
-            amountExpected: amount,
-            isPaid: false,
-            paidDate: null,
-            collectedBy: null
-        });
-    }
-    return arr;
-}
-/**
- * 🛠 HELPER: Migrates all subscriptions for a year to the new structure
- * Preserves the 'totalPaid' amount and re-allocates it to new slots.
- */
-async function migrateSubscriptions(yearDoc, session) {
-    const { _id, subscriptionFrequency, totalInstallments, amountPerInstallment } = yearDoc;
-
-    // 1. Fetch all subscriptions for this year
-    const subs = await Subscription.find({ year: _id }).session(session);
-
-    if (subs.length === 0) return; // No data to migrate
-
-    console.log(`🔄 Migrating ${subs.length} subscriptions to ${subscriptionFrequency} structure...`);
-
-    // 2. Iterate and Re-structure
-    for (const sub of subs) {
-        const creditAvailable = sub.totalPaid; // 💰 The specific amount they actually paid previously
-        
-        // A. Generate New Empty Structure
-        let newInstallments = [];
-        if (subscriptionFrequency !== 'none') {
-            for (let i = 1; i <= totalInstallments; i++) {
-                newInstallments.push({
-                    number: i,
-                    amountExpected: amountPerInstallment,
-                    isPaid: false,
-                    paidDate: null,
-                    collectedBy: null
-                });
-            }
-        }
-
-        // B. Re-apply Payments (The "Wallet" Logic)
-        let remainingCredit = creditAvailable;
-        let newTotalDue = 0;
-
-        newInstallments = newInstallments.map((inst) => {
-            // If we have enough credit to cover this installment fully
-            if (remainingCredit >= inst.amountExpected) {
-                remainingCredit -= inst.amountExpected;
-                return { 
-                    ...inst, 
-                    isPaid: true, 
-                    paidDate: new Date() // Timestamp of migration
-                };
-            }
-            // Else, it's unpaid (or partially paid, but schema assumes boolean)
-            // We calculate Due based on unpaid items
-            newTotalDue += inst.amountExpected;
-            return inst;
-        });
-
-        // C. Update Subscription Record
-        sub.installments = newInstallments;
-        // totalPaid remains exactly what it was (we don't lose money)
-        // totalDue is recalculated based on the new structure
-        sub.totalDue = newTotalDue; 
-
-        await sub.save({ session });
-    }
-}
-  
-exports.closeYear = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { clubId } = req.user;
-
-    // 1. Find the year
-    const year = await FestivalYear.findOne({ _id: id, club: clubId });
-    if (!year) return res.status(404).json({ message: "Year not found" });
-
-    // 2. Calculate Final Balance one last time
-    const finalBalance = await calculateBalance(year._id, year.openingBalance);
-
-    // 3. Save updates
-    year.isActive = false;
-    year.isClosed = true;
-    year.closingBalance = finalBalance; // ✅ STORED PERMANENTLY
-    
-    await year.save();
-
-    res.json({ 
-      success: true, 
-      message: `Year '${year.name}' closed. Final Balance: ₹${finalBalance} saved.`,
-      data: year
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server Error" });
-  }
-};
