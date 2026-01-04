@@ -3,6 +3,8 @@ const Membership = require("../models/Membership");
 const bcrypt = require("bcryptjs");
 const FestivalYear = require("../models/FestivalYear");
 const Subscription = require("../models/Subscription");
+const MemberFee = require("../models/MemberFee");
+const mongoose = require("mongoose");
 /**const FestivalYear = require("../models/FestivalYear");
 const Subscription = require("../models/Subscription");
  * @route GET /api/v1/members
@@ -189,7 +191,12 @@ exports.getMyStats = async (req, res) => {
     if (!activeYear) {
       return res.json({ 
         success: true, 
-        data: { totalPaid: 0, totalDue: 0, attendance: 0 } 
+        data: { 
+          totalPaid: 0, 
+          totalDue: 0, 
+          festivalChandaTotal: 0,
+          frequency: "none" 
+        } 
       });
     }
 
@@ -206,12 +213,33 @@ exports.getMyStats = async (req, res) => {
       member: membership._id 
     });
 
-    // 4. Return Data
+    // 4. ✅ Calculate Total Festival Chanda (MemberFee)
+    const chandaStats = await MemberFee.aggregate([
+      { 
+        $match: { 
+          club: activeYear.club, // Ensure same club
+          year: activeYear._id,  // Ensure active year
+          user: new mongoose.Types.ObjectId(userId) // Ensure current user
+        } 
+      },
+      { 
+        $group: { 
+          _id: null, 
+          total: { $sum: "$amount" } 
+        } 
+      }
+    ]);
+    const festivalChandaTotal = chandaStats[0]?.total || 0;
+
+    // 5. Return Data
     res.json({
       success: true,
       data: {
+        cycleName: activeYear.name,
+        frequency: activeYear.subscriptionFrequency, // ✅ Send Frequency
         totalPaid: sub ? sub.totalPaid : 0,
         totalDue: sub ? sub.totalDue : 0,
+        festivalChandaTotal, // ✅ Send Chanda Total
         role: membership.role,
         joinedAt: membership.createdAt
       }

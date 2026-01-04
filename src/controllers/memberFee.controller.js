@@ -9,7 +9,12 @@ const Membership = require("../models/Membership");
 exports.createPayment = async (req, res) => {
   try {
     const { userId, amount, notes } = req.body;
-    const { clubId, id: adminId } = req.user;
+    const { clubId, id: adminId, role } = req.user;
+
+    // ✅ AUTH CHECK: Only Admins can collect money
+    if (role !== 'admin') {
+      return res.status(403).json({ message: "Access denied. Admins only." });
+    }
 
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(404).json({ message: "No active festival year." });
@@ -29,7 +34,6 @@ exports.createPayment = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 /**
  * @route GET /api/v1/member-fees
  * @desc Get raw list of transactions (for history/logs)
