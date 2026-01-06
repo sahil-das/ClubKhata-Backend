@@ -15,6 +15,7 @@ exports.getSummary = async (req, res) => {
     // 1. Get Active Year
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     
+    // If no year exists yet, return zeroes
     if (!activeYear) {
       return res.json({
         success: true,
@@ -31,29 +32,28 @@ exports.getSummary = async (req, res) => {
     const yearId = activeYear._id;
 
     // 2. AGGREGATE: Subscriptions (Weekly/Monthly)
-    // NOTE: Aggregation returns raw PAISE (integers)
+    // We sum up the 'amountExpected' of all installments that are marked 'isPaid: true'
     const subscriptionStats = await Subscription.aggregate([
       { $match: { club: clubId, year: yearId } },
       { $unwind: "$installments" },
       { $match: { "installments.isPaid": true } },
       { $group: { _id: null, total: { $sum: "$installments.amountExpected" } } }
     ]);
-    // Convert Paise to Rupees
-    const totalSubscriptions = (subscriptionStats[0]?.total || 0) / 100;
+    const totalSubscriptions = subscriptionStats[0]?.total || 0;
 
     // 3. AGGREGATE: Member Fees (Chanda)
     const memberFeeStats = await MemberFee.aggregate([
       { $match: { club: clubId, year: yearId } },
       { $group: { _id: null, total: { $sum: "$amount" } } }
     ]);
-    const totalMemberFees = (memberFeeStats[0]?.total || 0) / 100;
+    const totalMemberFees = memberFeeStats[0]?.total || 0;
 
     // 4. AGGREGATE: Donations (Public)
     const donationStats = await Donation.aggregate([
       { $match: { club: clubId, year: yearId } },
       { $group: { _id: null, total: { $sum: "$amount" } } }
     ]);
-    const totalDonations = (donationStats[0]?.total || 0) / 100;
+    const totalDonations = donationStats[0]?.total || 0;
 
     // 5. AGGREGATE: Expenses
     const expenseStats = await Expense.aggregate([
@@ -61,16 +61,15 @@ exports.getSummary = async (req, res) => {
         $match: { 
           club: clubId, 
           year: yearId,
-          status: "approved" 
+          status: "approved" // 👈 CRITICAL: Only count approved money!
         } 
       }, 
       { $group: { _id: null, total: { $sum: "$amount" } } }
     ]);
-    const totalExpenses = (expenseStats[0]?.total || 0) / 100;
+    const totalExpenses = expenseStats[0]?.total || 0;
 
     // 6. Final Calculation
-    // Use Number() to ensure math instead of string concatenation
-    const openingBalance = Number(activeYear.openingBalance) || 0;
+    const openingBalance = activeYear.openingBalance || 0;
     const currentIncome = totalSubscriptions + totalMemberFees + totalDonations;
     const totalBalance = openingBalance + currentIncome - totalExpenses;
 
@@ -78,14 +77,14 @@ exports.getSummary = async (req, res) => {
       success: true,
       data: {
         yearName: activeYear.name,
-        openingBalance: openingBalance,
-        totalIncome: Number(currentIncome.toFixed(2)),
-        totalExpense: Number(totalExpenses.toFixed(2)),
-        balance: Number(totalBalance.toFixed(2)),
+        openingBalance,
+        totalIncome: currentIncome,
+        totalExpense: totalExpenses,
+        balance: totalBalance,
         breakdown: {
-          subscriptions: Number(totalSubscriptions.toFixed(2)),
-          memberFees: Number(totalMemberFees.toFixed(2)),
-          donations: Number(totalDonations.toFixed(2))
+          subscriptions: totalSubscriptions,
+          memberFees: totalMemberFees,
+          donations: totalDonations
         }
       }
     });

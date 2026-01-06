@@ -1,5 +1,4 @@
 const mongoose = require("mongoose");
-const { get: getPrice, set: setPrice } = require("../utils/mongooseMoney");
 
 const festivalYearSchema = new mongoose.Schema({
   club: { type: mongoose.Schema.Types.ObjectId, ref: "Club", required: true },
@@ -7,25 +6,22 @@ const festivalYearSchema = new mongoose.Schema({
   startDate: { type: Date, required: true },
   endDate: { type: Date, required: true },
 
+  // ⚙️ THE RULES FOR THIS SPECIFIC YEAR
   subscriptionFrequency: { 
     type: String, 
     enum: ["weekly", "monthly", "none"],
     required: true 
   },
-  totalInstallments: { type: Number, default: 52 },
+  totalInstallments: { type: Number, default: 52 }, // e.g. 40 weeks
+  amountPerInstallment: { type: Number, default: 0 }, // e.g. 20 Rs
   
-  // 👈 UPDATED
-  amountPerInstallment: { type: Number, get: getPrice, set: setPrice, default: 0 },
-  openingBalance: { type: Number, get: getPrice, set: setPrice, default: 0 },
-  closingBalance: { type: Number, get: getPrice, set: setPrice, default: 0 },
+  openingBalance: { type: Number, default: 0 },
+  closingBalance: { type: Number, default: 0 },
   
   isActive: { type: Boolean, default: false },
   isClosed: { type: Boolean, default: false },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
-}, { 
-  timestamps: true,
-  toJSON: { getters: true },
-  toObject: { getters: true }
-});
+}, { timestamps: true });
 
+// ... index ...
 module.exports = mongoose.model("FestivalYear", festivalYearSchema);

@@ -1,13 +1,9 @@
 const express = require("express");
 const cors = require("cors");
-const helmet = require("helmet");
 const connectDB = require("./config/db");
 const { PORT } = require("./config/env");
 
-// Import the Global Limiter
-const { globalLimiter } = require("./middleware/limiters");
-
-// Import Routes
+// 1. Import New SaaS Routes
 const authRoutes = require("./routes/auth.routes");
 const membershipRoutes = require("./routes/membership.routes");
 const festivalYearRoutes = require("./routes/festivalYear.routes");
@@ -20,61 +16,46 @@ const archiveRoutes = require("./routes/archive.routes");
 const noticeRoutes = require("./routes/notice.routes");
 const app = express();
 
-/* ================= 1. SECURITY HEADERS ================= */
-app.use(helmet());
-
-/* ================= 2. CORS (MUST BE BEFORE LIMITERS) ================= */
-// If we don't put this first, the limiter blocks the "Preflight" check 
-// and the browser throws a CORS error instead of a 429 error.
-const allowedOrigins = process.env.CORS_ORIGIN 
-  ? process.env.CORS_ORIGIN.split(",") 
-  : ["http://localhost:5173"];
-
+/* ================= CORS ================= */
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.indexOf(origin) === -1) {
-        if (process.env.NODE_ENV === 'development') return callback(null, true);
-        return callback(new Error('CORS blocked'), false);
-      }
-      return callback(null, true);
-    },
+    origin: [
+      "http://localhost:5173",       // Local Laptop
+      "http://10.155.91.46:5173"     // Phone/Network IP (Update as needed)
+    ],
     credentials: true,
   })
 );
 
-/* ================= 3. RATE LIMITER ================= */
-app.use(globalLimiter);
+app.use(express.json());
 
-/* ================= 4. PARSERS ================= */
-app.use(express.json({ limit: "10kb" }));
-
-/* ================= 5. DB & ROUTES ================= */
+/* ================= DB ================= */
 connectDB();
 
-app.use("/api/v1/auth", authRoutes);
-app.use("/api/v1/members", membershipRoutes);
-app.use("/api/v1/years", festivalYearRoutes);
-app.use("/api/v1/subscriptions", subscriptionRoutes);
-app.use("/api/v1/member-fees", memberFeeRoutes);
-app.use("/api/v1/donations", donationRoutes);
-app.use("/api/v1/expenses", expenseRoutes);
-app.use("/api/v1/finance", financeRoutes);
+/* ================= ROUTES ================= */
+// 🚀 SaaS API Structure (v1)
+
+// Identity & Access
+app.use("/api/v1/auth", authRoutes);            // Login / Register Club
+app.use("/api/v1/members", membershipRoutes);   // Manage Club Members
+
+// Core Context
+app.use("/api/v1/years", festivalYearRoutes);   // Create/Manage Events (Durga Puja 2025)
+
+// Financials (Income)
+app.use("/api/v1/subscriptions", subscriptionRoutes); // Weekly/Monthly Collections
+app.use("/api/v1/member-fees", memberFeeRoutes);      // One-time Chanda
+app.use("/api/v1/donations", donationRoutes);         // Public Donations
+
+// Financials (Expense & Stats)
+app.use("/api/v1/expenses", expenseRoutes);     // Expenses
+app.use("/api/v1/finance", financeRoutes);      // Dashboard Summary
 app.use("/api/v1/audit", require("./routes/audit.routes"));
 app.use("/api/v1/archives", archiveRoutes);
 app.use("/api/v1/notices", noticeRoutes);
 /* ================= ROOT ================= */
 app.get("/", (req, res) => {
-  res.send("Saraswati Club SaaS Backend (v1) is Secure & Running");
-});
-
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ 
-    message: "Internal Server Error", 
-    error: process.env.NODE_ENV === "development" ? err.message : undefined 
-  });
+  res.send("Saraswati Club SaaS Backend (v1) is Running");
 });
 
 module.exports = { app, PORT };
