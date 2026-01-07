@@ -13,12 +13,34 @@ exports.getMemberSubscription = async (req, res) => {
     const { memberId } = req.params;
     const { clubId } = req.user;
 
-    const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
-    if (!activeYear) return res.status(400).json({ message: "No active year found." });
-
+    // 1. GET MEMBER DETAILS FIRST (Always required)
     const memberShip = await Membership.findById(memberId).populate("user");
     if (!memberShip) return res.status(404).json({ message: "Member not found" });
 
+    // 2. GET ACTIVE YEAR
+    const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
+
+    // ✅ CASE: NO ACTIVE YEAR
+    // Return member data so the Profile Header still loads, but set financial data to null.
+    if (!activeYear) {
+        return res.json({
+            success: true,
+            data: {
+                member: {
+                    memberName: memberShip.user.name,
+                    email: memberShip.user.email,
+                    phone: memberShip.user.phone,
+                    role: memberShip.role,
+                    userId: memberShip.user._id
+                },
+                subscription: null,
+                year: null,
+                rules: null
+            }
+        });
+    }
+
+    // 3. Get Subscription (if exists) for the Active Year
     let sub = await Subscription.findOne({ 
       club: clubId, 
       year: activeYear._id, 
@@ -28,38 +50,31 @@ exports.getMemberSubscription = async (req, res) => {
     const targetAmountInt = activeYear.get('amountPerInstallment', null, { getters: false }) || 0;
     const targetCount = activeYear.totalInstallments || 52;
 
-    // VIRTUAL PREVIEW (If no sub exists, generate object in memory only)
+    // 4. VIRTUAL PREVIEW (If no sub exists, generate object in memory)
     if (!sub) {
       const installments = [];
       for (let i = 1; i <= targetCount; i++) {
         installments.push({
           number: i,
-          amountExpected: targetAmountInt, // Raw Int
+          amountExpected: targetAmountInt, 
           isPaid: false
         });
       }
       
-      // Create a temporary object structure (Not Mongoose Document)
       sub = {
-        _id: null, // No ID yet
+        _id: null, 
         totalPaid: 0,
         totalDue: targetCount * targetAmountInt,
         installments: installments
       };
     }
 
-    // Format for Client
-    // Note: If sub is a Mongoose doc, use .get(). If plain object, use direct access.
+    // 5. Format Subscription for Client
     const isDoc = typeof sub.get === 'function';
-    
-    // Helper to get raw values safely (whether Doc or Object)
-    const getRaw = (obj, field) => {
-        return isDoc ? obj.get(field, null, { getters: false }) : obj[field];
-    };
+    const getRaw = (obj, field) => isDoc ? obj.get(field, null, { getters: false }) : obj[field];
 
     const formattedSub = {
         _id: sub._id,
-        // toClient (from your util) divides by 100, so we pass raw Integers
         totalPaid: toClient(getRaw(sub, 'totalPaid')),
         totalDue: toClient(getRaw(sub, 'totalDue')),
         installments: sub.installments.map(inst => ({
@@ -70,29 +85,38 @@ exports.getMemberSubscription = async (req, res) => {
         }))
     };
 
+    // ✅ FULL RESPONSE (With Subscription Data)
     res.json({
       success: true,
       data: {
         subscription: formattedSub,
-        memberName: memberShip.user.name,
         
-        // ✅ CRITICAL FIX: Send the User ID so frontend can fetch fees
-        memberUserId: memberShip.user._id,
-        
+        member: {
+            memberName: memberShip.user.name,
+            email: memberShip.user.email,
+            personalEmail: memberShip.user.personalEmail, 
+            phone: memberShip.user.phone, 
+            role: memberShip.role,        
+            userId: memberShip.user._id   
+        },
+
+        year: {
+            name: activeYear.name,
+            frequency: activeYear.subscriptionFrequency
+        },
 
         rules: {
-          name: activeYear.name,
-          frequency: activeYear.subscriptionFrequency,
           amount: toClient(targetAmountInt)
         }
       }
     });
 
   } catch (err) {
-    console.error("Subscription Error:", err);
-    res.status(500).json({ message: "Server Error" });
+    console.error("Get Member Sub Error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
+
 /**
  * @desc Pay Installment (Robust NaN Fix)
  * @route POST /api/v1/subscriptions/pay
