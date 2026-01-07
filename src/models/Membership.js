@@ -1,38 +1,25 @@
 const mongoose = require("mongoose");
 
 const membershipSchema = new mongoose.Schema({
-  // Link to the Global User
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true
-  },
+  user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  club: { type: mongoose.Schema.Types.ObjectId, ref: "Club", required: true },
   
-  // Link to the Specific Club
-  club: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Club",
-    required: true
-  },
-  
-  // Role within THIS specific club
-  role: {
-    type: String,
+  role: { 
+    type: String, 
     enum: ["admin", "member", "treasurer"], 
-    default: "member"
+    default: "member" 
   },
-
-  // Status (Active/Inactive allows banning/removing without deleting history)
-  status: {
-    type: String,
-    enum: ["active", "inactive", "banned"],
-    default: "active"
+  
+  status: { 
+    type: String, 
+    enum: ["active", "inactive", "banned"], 
+    default: "active" 
   },
-
+  
   joinedAt: { type: Date, default: Date.now }
-});
+}, { timestamps: true });
 
-// 🔒 CRITICAL: A user can only join the SAME club ONCE
+// 🛡️ SECURITY: Prevent duplicate membership in the same club
 membershipSchema.index({ user: 1, club: 1 }, { unique: true });
 
 module.exports = mongoose.model("Membership", membershipSchema);

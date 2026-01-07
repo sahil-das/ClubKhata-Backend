@@ -1,9 +1,11 @@
 const express = require("express");
 const cors = require("cors");
+const helmet = require("helmet"); // 🛡️ NEW
 const connectDB = require("./config/db");
 const { PORT } = require("./config/env");
+const { globalLimiter, authLimiter } = require("./middleware/limiters"); // 🛡️ NEW
 
-// 1. Import New SaaS Routes
+// Routes
 const authRoutes = require("./routes/auth.routes");
 const membershipRoutes = require("./routes/membership.routes");
 const festivalYearRoutes = require("./routes/festivalYear.routes");
@@ -14,48 +16,62 @@ const expenseRoutes = require("./routes/expenses.routes");
 const financeRoutes = require("./routes/finance.routes");
 const archiveRoutes = require("./routes/archive.routes");
 const noticeRoutes = require("./routes/notice.routes");
+
 const app = express();
 
-/* ================= CORS ================= */
+/* ================= SECURITY ================= */
+// 1. Set Security Headers
+app.use(helmet());
+
+// 2. Rate Limiting (Global)
+app.use(globalLimiter);
+
+// 3. CORS (Allow env config or fallbacks)
+// Check if CORS_ORIGIN is a comma-separated string in .env, otherwise use defaults
+const allowedOrigins = process.env.CORS_ORIGIN 
+  ? process.env.CORS_ORIGIN.split(",") 
+  : ["http://localhost:5173", "http://localhost:3000"];
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",       // Local Laptop
-      "http://10.155.91.46:5173"     // Phone/Network IP (Update as needed)
-    ],
+    origin: allowedOrigins,
     credentials: true,
   })
 );
 
-app.use(express.json());
+app.use(express.json({ limit: "10kb" })); // Body limit to prevent DoS
 
 /* ================= DB ================= */
 connectDB();
 
 /* ================= ROUTES ================= */
-// 🚀 SaaS API Structure (v1)
+// Apply stricter limiter ONLY to Auth
+app.use("/api/v1/auth", authLimiter, authRoutes);
 
-// Identity & Access
-app.use("/api/v1/auth", authRoutes);            // Login / Register Club
-app.use("/api/v1/members", membershipRoutes);   // Manage Club Members
-
-// Core Context
-app.use("/api/v1/years", festivalYearRoutes);   // Create/Manage Events (Durga Puja 2025)
-
-// Financials (Income)
-app.use("/api/v1/subscriptions", subscriptionRoutes); // Weekly/Monthly Collections
-app.use("/api/v1/member-fees", memberFeeRoutes);      // One-time Chanda
-app.use("/api/v1/donations", donationRoutes);         // Public Donations
-
-// Financials (Expense & Stats)
-app.use("/api/v1/expenses", expenseRoutes);     // Expenses
-app.use("/api/v1/finance", financeRoutes);      // Dashboard Summary
+// Other Routes
+app.use("/api/v1/members", membershipRoutes);
+app.use("/api/v1/years", festivalYearRoutes);
+app.use("/api/v1/subscriptions", subscriptionRoutes);
+app.use("/api/v1/member-fees", memberFeeRoutes);
+app.use("/api/v1/donations", donationRoutes);
+app.use("/api/v1/expenses", expenseRoutes);
+app.use("/api/v1/finance", financeRoutes);
 app.use("/api/v1/audit", require("./routes/audit.routes"));
 app.use("/api/v1/archives", archiveRoutes);
 app.use("/api/v1/notices", noticeRoutes);
-/* ================= ROOT ================= */
+
+/* ================= ERROR HANDLING ================= */
+// Global Error Handler (Replaces repeated try-catch blocks)
+app.use((err, req, res, next) => {
+  console.error("🔥 Global Error:", err.stack);
+  res.status(500).json({ 
+    message: "Internal Server Error", 
+    error: process.env.NODE_ENV === "development" ? err.message : undefined 
+  });
+});
+
 app.get("/", (req, res) => {
-  res.send("Saraswati Club SaaS Backend (v1) is Running");
+  res.send("Saraswati Club SaaS Backend (v1.1 Secured) is Running");
 });
 
 module.exports = { app, PORT };

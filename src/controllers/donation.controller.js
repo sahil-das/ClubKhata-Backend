@@ -1,6 +1,8 @@
 const Donation = require("../models/Donation");
 const FestivalYear = require("../models/FestivalYear");
 const { logAction } = require("../utils/auditLogger");
+const { toClient } = require("../utils/mongooseMoney"); // 👈 IMPORT THIS
+
 /**
  * @route POST /api/v1/donations
  * @desc Add a new public donation
@@ -10,31 +12,48 @@ exports.addDonation = async (req, res) => {
     const { donorName, amount, address, phone, date, receiptNo } = req.body;
     const { clubId, id: userId } = req.user;
 
-    // 1. Find Active Year
+    // 1. Validate Input
+    if (!donorName || typeof donorName !== "string" || !donorName.trim()) {
+      return res.status(400).json({ message: "Donor name is required" });
+    }
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      return res.status(400).json({ message: "Valid positive amount is required" });
+    }
+
+    // 2. Find Active Year
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(400).json({ message: "No active festival year found." });
 
-    // 2. Create Donation
+    // 3. Create Donation
     const donation = await Donation.create({
       club: clubId,
       year: activeYear._id,
-      donorName,
-      amount,
-      address,
-      phone,
-      receiptNo,
-      date: date || new Date(),
+      donorName: donorName.trim(),
+      amount: Number(amount), // Input is Rupees (50) -> Saved as Paisa (5000)
+      address: address?.trim(),
+      phone: phone?.trim(),
+      receiptNo: receiptNo?.trim(),
+      date: date ? new Date(date) : new Date(),
       collectedBy: userId
     });
 
+    // 4. Log Action
     await logAction({
       req,
       action: "DONATION_RECEIVED",
-      target: `Donor: ${donorName}`,
-      details: { amount: amount, receipt: receiptNo }
+      target: `Donor: ${donation.donorName}`,
+      details: { 
+        donationId: donation._id,
+        amount: Number(amount), 
+        receipt: donation.receiptNo 
+      }
     });
 
-    res.status(201).json({ success: true, message: "Donation added", data: donation });
+    // 💰 FIX: Convert to Plain Object & Format Amount to "50.00"
+    const donationObj = donation.toObject();
+    donationObj.amount = toClient(donation.get('amount', null, { getters: false }));
+
+    res.status(201).json({ success: true, message: "Donation added", data: donationObj });
   } catch (err) {
     console.error("Add Donation Error:", err);
     res.status(500).json({ message: "Server error" });
@@ -49,19 +68,25 @@ exports.getDonations = async (req, res) => {
   try {
     const { clubId } = req.user;
     
-    // 1. Find Context
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     
-    // Graceful handling if no year exists yet
     if (!activeYear) return res.json({ success: true, data: [] });
 
-    // 2. Fetch Data
     const donations = await Donation.find({ club: clubId, year: activeYear._id })
-      .populate("collectedBy", "name") // Show who collected the cash
+      .populate("collectedBy", "name")
       .sort({ date: -1 });
 
-    res.json({ success: true, data: donations });
+    // 💰 FIX: Map and Format Every Item
+    const formattedDonations = donations.map(d => {
+        const obj = d.toObject();
+        // Get raw integer (5000) -> Convert to client string ("50.00")
+        obj.amount = toClient(d.get('amount', null, { getters: false }));
+        return obj;
+    });
+
+    res.json({ success: true, data: formattedDonations });
   } catch (err) {
+    console.error("Get Donations Error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -72,23 +97,29 @@ exports.getDonations = async (req, res) => {
  */
 exports.deleteDonation = async (req, res) => {
   try {
-    const donation = await Donation.findOneAndDelete({ 
-      _id: req.params.id, 
-      club: req.user.clubId 
-    });
+    const { id } = req.params;
+    
+    // Find first to log it
+    const donation = await Donation.findOne({ _id: id, club: req.user.clubId });
+
+    if (!donation) return res.status(404).json({ message: "Donation not found" });
+
+    await Donation.findByIdAndDelete(id);
 
     // ✅ LOG DELETION
     await logAction({
       req,
       action: "DONATION_DELETED",
       target: `Deleted Donation: ${donation.donorName}`,
-      details: { amount: donation.amount }
+      details: { 
+        amount: donation.amount, // Logging the string/getter value is fine here
+        receipt: donation.receiptNo
+      }
     });
-
-    if (!donation) return res.status(404).json({ message: "Donation not found" });
 
     res.json({ success: true, message: "Donation deleted successfully" });
   } catch (err) {
+    console.error("Delete Donation Error:", err);
     res.status(500).json({ message: "Server error" });
   }
 };

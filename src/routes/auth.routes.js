@@ -1,15 +1,25 @@
-// src/routes/auth.routes.js
 const express = require("express");
 const router = express.Router();
-const authController = require("../controllers/auth.controller");
-const authMiddleware = require("../middleware/auth.middleware");
+const { 
+  registerClub, 
+  login, 
+  refreshToken, 
+  revokeToken, 
+  getMe, 
+  updateProfile, 
+  changePassword 
+} = require("../controllers/auth.controller");
+const protect = require("../middleware/auth.middleware");
 
-// Public Routes
-router.post("/register", authController.registerClub); // 👈 NEW
-router.post("/login", authController.login);
+// Public
+router.post("/register", registerClub);
+router.post("/login", login);
+router.post("/refresh-token", refreshToken); // 🆕
 
-// Protected Routes
-router.get("/me", authMiddleware, authController.getMe);
-router.put("/profile", authMiddleware, authController.updateProfile);
-router.put("/change-password", authMiddleware, authController.changePassword);
+// Protected
+router.post("/revoke-token", protect, revokeToken); // 🆕
+router.get("/me", protect, getMe);
+router.put("/profile", protect, updateProfile);
+router.put("/update-password", protect, changePassword);
+
 module.exports = router;

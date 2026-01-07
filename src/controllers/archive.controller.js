@@ -3,6 +3,7 @@ const Expense = require("../models/Expense");
 const MemberFee = require("../models/MemberFee");
 const Donation = require("../models/Donation");
 const Subscription = require("../models/Subscription");
+const { toClient } = require("../utils/mongooseMoney"); // 👈 IMPORT
 
 /**
  * @desc Get List of Closed Years
@@ -17,10 +18,17 @@ exports.getArchivedYears = async (req, res) => {
       club: clubId, 
       isClosed: true 
     })
-    .select("name startDate endDate closingBalance") // Select only needed fields
+    .select("name startDate endDate closingBalance") 
     .sort({ endDate: -1 });
 
-    res.json({ success: true, data: closedYears });
+    // 💰 FIX: Format closingBalance to "50.00" string
+    const formattedYears = closedYears.map(y => {
+        const obj = y.toObject();
+        obj.closingBalance = toClient(y.get('closingBalance', null, { getters: false }));
+        return obj;
+    });
+
+    res.json({ success: true, data: formattedYears });
   } catch (err) {
     console.error("Archive List Error:", err);
     res.status(500).json({ message: "Server error" });
@@ -36,69 +44,97 @@ exports.getArchiveDetails = async (req, res) => {
     const { yearId } = req.params;
     const { clubId } = req.user;
 
-    // 1. Verify the Year exists and belongs to this club
+    // 1. Verify the Year exists
     const yearDoc = await FestivalYear.findOne({ _id: yearId, club: clubId });
     if (!yearDoc) return res.status(404).json({ message: "Year record not found" });
 
-    // 2. Parallel Fetching for Speed ⚡
-    // We use the 'year' field which links data to this specific festival cycle
+    // 2. Parallel Fetching
     const [expenses, fees, donations, subscriptions] = await Promise.all([
-      
-      // A. Expenses (Only Approved)
-      Expense.find({ club: clubId, year: yearId, status: "approved" })
-        .sort({ date: -1 }),
-
-      // B. Puja/Festival Fees
-      MemberFee.find({ club: clubId, year: yearId })
-        .populate("user", "name")
-        .sort({ createdAt: -1 }),
-
-      // C. Outside Donations
-      Donation.find({ club: clubId, year: yearId })
-        .sort({ date: -1 }),
-
-      // D. Subscriptions (For calculating collections if any)
+      // A. Expenses
+      Expense.find({ club: clubId, year: yearId, status: "approved" }).sort({ date: -1 }),
+      // B. Puja Fees
+      MemberFee.find({ club: clubId, year: yearId }).populate("user", "name").sort({ createdAt: -1 }),
+      // C. Donations
+      Donation.find({ club: clubId, year: yearId }).sort({ date: -1 }),
+      // D. Subscriptions
       Subscription.find({ club: clubId, year: yearId })
     ]);
 
-    // 3. Calculate Totals
-    const totalExpense = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const totalFees = fees.reduce((sum, f) => sum + f.amount, 0);
-    const totalDonations = donations.reduce((sum, d) => sum + d.amount, 0);
+    // 3. Calculate Totals (⚠️ USE RAW INTEGERS TO AVOID STRING CONCAT)
     
-    // Calculate Subscription Collection for that year
-    // We sum up only 'isPaid' installments
-    let totalSubscriptionCollected = 0;
+    const totalExpenseInt = expenses.reduce((sum, e) => {
+        return sum + (e.get('amount', null, { getters: false }) || 0);
+    }, 0);
+
+    const totalFeesInt = fees.reduce((sum, f) => {
+        return sum + (f.get('amount', null, { getters: false }) || 0);
+    }, 0);
+
+    const totalDonationsInt = donations.reduce((sum, d) => {
+        return sum + (d.get('amount', null, { getters: false }) || 0);
+    }, 0);
+    
+    // Calculate Subscription Collection
+    let totalSubscriptionCollectedInt = 0;
     subscriptions.forEach(sub => {
-        sub.installments.forEach(inst => {
-            if (inst.isPaid) totalSubscriptionCollected += inst.amountExpected;
-        });
+        if (sub.installments) {
+            sub.installments.forEach(inst => {
+                if (inst.isPaid) {
+                    // Access raw integer from subdocument
+                    const amount = inst.get('amountExpected', null, { getters: false }) || 0;
+                    totalSubscriptionCollectedInt += amount;
+                }
+            });
+        }
     });
 
-    // 4. Construct the Financial Summary
+    const totalIncomeInt = totalSubscriptionCollectedInt + totalFeesInt + totalDonationsInt;
+    
+    // Get raw opening/closing balance
+    const openingBalanceInt = yearDoc.get('openingBalance', null, { getters: false }) || 0;
+    const closingBalanceInt = yearDoc.get('closingBalance', null, { getters: false }) || 0;
+
+    // 4. Construct Financial Summary (Convert to Strings for Client)
     const financialSummary = {
-      openingBalance: yearDoc.openingBalance,
+      openingBalance: toClient(openingBalanceInt),
       income: {
-        subscriptions: totalSubscriptionCollected,
-        fees: totalFees,
-        donations: totalDonations,
-        total: totalSubscriptionCollected + totalFees + totalDonations
+        subscriptions: toClient(totalSubscriptionCollectedInt),
+        fees: toClient(totalFeesInt),
+        donations: toClient(totalDonationsInt),
+        total: toClient(totalIncomeInt)
       },
-      expense: totalExpense,
-      // The stored closing balance is the source of truth, 
-      // but we send the calculated one too for verification if needed.
-      netBalance: yearDoc.closingBalance 
+      expense: toClient(totalExpenseInt),
+      netBalance: toClient(closingBalanceInt) // Truth from DB
     };
+
+    // 💰 FIX: Format Records Lists (Map & Convert)
+    const formattedExpenses = expenses.map(e => {
+        const obj = e.toObject();
+        obj.amount = toClient(e.get('amount', null, { getters: false }));
+        return obj;
+    });
+
+    const formattedFees = fees.map(f => {
+        const obj = f.toObject();
+        obj.amount = toClient(f.get('amount', null, { getters: false }));
+        return obj;
+    });
+
+    const formattedDonations = donations.map(d => {
+        const obj = d.toObject();
+        obj.amount = toClient(d.get('amount', null, { getters: false }));
+        return obj;
+    });
 
     res.json({
       success: true,
       data: {
-        info: yearDoc,
+        info: yearDoc, 
         summary: financialSummary,
         records: {
-          expenses,
-          fees,
-          donations
+          expenses: formattedExpenses,  // ✅ Now "50.00"
+          fees: formattedFees,          // ✅ Now "50.00"
+          donations: formattedDonations // ✅ Now "50.00"
         }
       }
     });

@@ -20,7 +20,10 @@ const subscriptionSchema = new mongoose.Schema({
   // 💰 FIX: Use mongooseMoney
   totalPaid: { ...mongooseMoney, default: 0 },
   totalDue: { ...mongooseMoney, default: 0 }
-}, { timestamps: true });
+}, { timestamps: true,
+  toJSON: { getters: true },   // 👈 Add this
+  toObject: { getters: true }  // 👈 Add this
+ });
 
 subscriptionSchema.index({ year: 1, member: 1 }, { unique: true });
 

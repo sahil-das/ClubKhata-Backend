@@ -1,10 +1,12 @@
 const Subscription = require("../models/Subscription");
 const FestivalYear = require("../models/FestivalYear");
 const Membership = require("../models/Membership");
-const User = require("../models/User");
 const { logAction } = require("../utils/auditLogger");
+const { toClient } = require("../utils/mongooseMoney"); // 👈 IMPORT THIS
+
 /**
  * @desc Get Subscription Card & Self-Heal Data
+ * @route GET /api/v1/subscriptions/member/:memberId
  */
 exports.getMemberSubscription = async (req, res) => {
   try {
@@ -19,7 +21,6 @@ exports.getMemberSubscription = async (req, res) => {
     const memberShip = await Membership.findById(memberId).populate("user");
     if (!memberShip) return res.status(404).json({ message: "Member not found" });
 
-    // ✅ FIX: Capture User ID and Name safely
     const memberName = memberShip.user ? memberShip.user.name : "Unknown Member";
     const memberUserId = memberShip.user ? memberShip.user._id : null; 
 
@@ -30,17 +31,19 @@ exports.getMemberSubscription = async (req, res) => {
       member: memberId 
     });
 
-    // 4. AUTO-CREATE or AUTO-FIX (Self-Healing Logic 🪄)
-    const targetAmount = activeYear.amountPerInstallment || 0;
+    // 4. Get Target Amount (Raw Integer from DB, e.g., 5000)
+    const targetAmountInt = activeYear.get('amountPerInstallment', null, { getters: false }) || 0;
     const targetCount = activeYear.totalInstallments || 52;
 
+    // --- SELF HEALING LOGIC ---
+    // If subscription doesn't exist or amounts are wrong, fix them here
     if (!sub) {
       // Create New
       const installments = [];
       for (let i = 1; i <= targetCount; i++) {
         installments.push({
           number: i,
-          amountExpected: targetAmount,
+          amountExpected: targetAmountInt / 100, // 💰 Assign Rupees (Setter x100)
           isPaid: false
         });
       }
@@ -50,33 +53,58 @@ exports.getMemberSubscription = async (req, res) => {
         year: activeYear._id,
         member: memberId,
         installments: installments,
-        totalDue: targetCount * targetAmount
+        totalDue: (targetCount * targetAmountInt) / 100 // 💰 Assign Rupees
       });
     } else {
-      // 5. DATA REPAIR
-      const needsUpdate = sub.installments.some(i => i.amountExpected !== targetAmount);
+      // Fix Existing Data (Sync amount with current Year settings)
+      const rawInstallments = sub.toObject({ getters: false }).installments || [];
+      const needsUpdate = rawInstallments.some(i => i.amountExpected !== targetAmountInt);
       
-      if (needsUpdate && targetAmount > 0) {
-        sub.installments.forEach(i => { i.amountExpected = targetAmount; });
+      if (needsUpdate && targetAmountInt > 0) {
+        // Assign Rupees to trigger Setter (x100)
+        sub.installments.forEach(i => { i.amountExpected = targetAmountInt / 100; });
         
         const paidCount = sub.installments.filter(i => i.isPaid).length;
-        sub.totalPaid = paidCount * targetAmount;
-        sub.totalDue = (sub.installments.length * targetAmount) - sub.totalPaid;
+        
+        // Calculate Totals (Paisa) then Divide by 100 for Assignment
+        const totalPaidPaisa = paidCount * targetAmountInt;
+        const totalDuePaisa = (sub.installments.length * targetAmountInt) - totalPaidPaisa;
+
+        sub.totalPaid = totalPaidPaisa / 100; 
+        sub.totalDue = totalDuePaisa / 100;
         
         await sub.save();
       }
     }
 
+    // 💰 MANUAL FORMATTING FOR CLIENT
+    // ----------------------------------------------------
+    const subObj = sub.toObject();
+
+    // Format Root Totals
+    subObj.totalPaid = toClient(sub.get('totalPaid', null, { getters: false }));
+    subObj.totalDue = toClient(sub.get('totalDue', null, { getters: false }));
+
+    // Format Installments Array
+    if (sub.installments) {
+        subObj.installments = sub.installments.map(inst => {
+            const instObj = inst.toObject();
+            instObj.amountExpected = toClient(inst.get('amountExpected', null, { getters: false }));
+            return instObj;
+        });
+    }
+    // ----------------------------------------------------
+
     res.json({
       success: true,
       data: {
-        subscription: sub,
+        subscription: subObj, // 👈 Send formatted object
         memberName: memberName,
-        memberUserId: memberUserId, // 👈 CRITICAL FIX: Sending User ID to Frontend
+        memberUserId: memberUserId,
         rules: {
           name: activeYear.name,
           frequency: activeYear.subscriptionFrequency,
-          amount: targetAmount
+          amount: toClient(targetAmountInt)
         }
       }
     });
@@ -89,6 +117,7 @@ exports.getMemberSubscription = async (req, res) => {
 
 /**
  * @desc Pay Installment
+ * @route POST /api/v1/subscriptions/pay
  */
 exports.payInstallment = async (req, res) => {
   try {
@@ -97,16 +126,12 @@ exports.payInstallment = async (req, res) => {
     const sub = await Subscription.findById(subscriptionId).populate("year");
     if (!sub) return res.status(404).json({ message: "Subscription not found" });
 
-    // 🔒 SECURITY CHECK: If Year Frequency is 'none', block payment
+    // Security Checks
     if (sub.year.subscriptionFrequency === 'none') {
-       return res.status(400).json({ 
-         message: "This financial year is set to 'Donations Only'. Subscriptions are disabled." 
-       });
+       return res.status(400).json({ message: "Subscriptions are disabled." });
     }
-
-    // 🔒 SECURITY CHECK
     if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Only Admins can update payments." });
+       return res.status(403).json({ message: "Only Admins can update payments." });
     }
 
     const installment = sub.installments.find(i => i.number === installmentNumber);
@@ -118,30 +143,48 @@ exports.payInstallment = async (req, res) => {
     installment.paidDate = newStatus ? new Date() : null;
     installment.collectedBy = newStatus ? req.user.id : null;
 
-    // Recalculate Totals
-    let newPaid = 0;
-    let newDue = 0;
+    // Recalculate Totals (Using Raw Integers)
+    let newPaidPaisa = 0;
+    let newDuePaisa = 0;
     
     sub.installments.forEach(i => {
-        if(i.isPaid) newPaid += i.amountExpected;
-        else newDue += i.amountExpected;
+        const val = i.get('amountExpected', null, { getters: false }) || 0;
+        if(i.isPaid) newPaidPaisa += val;
+        else newDuePaisa += val;
     });
 
-    sub.totalPaid = newPaid;
-    sub.totalDue = newDue;
+    // 💰 FIX: Divide by 100 before assigning (Mongoose Setter will multiply back)
+    sub.totalPaid = newPaidPaisa / 100;
+    sub.totalDue = newDuePaisa / 100;
 
     await sub.save();
 
-    // ✅ LOG THE ACTION
+    // Log Action
     const memberName = sub.member?.user?.name || "Member";
+    const logAmount = toClient(installment.get('amountExpected', null, { getters: false }));
+
     await logAction({
       req,
       action: newStatus ? "SUBSCRIPTION_PAID" : "SUBSCRIPTION_REVOKED",
       target: `Sub: ${memberName} (Week #${installmentNumber})`,
-      details: { amount: installment.amountExpected, status: newStatus ? "Paid" : "Unpaid" }
+      details: { amount: logAmount, status: newStatus ? "Paid" : "Unpaid" }
     });
 
-    res.json({ success: true, data: sub });
+    // 💰 MANUAL FORMATTING FOR CLIENT
+    // ----------------------------------------------------
+    const subObj = sub.toObject();
+
+    subObj.totalPaid = toClient(sub.get('totalPaid', null, { getters: false }));
+    subObj.totalDue = toClient(sub.get('totalDue', null, { getters: false }));
+
+    subObj.installments = sub.installments.map(inst => {
+        const instObj = inst.toObject();
+        instObj.amountExpected = toClient(inst.get('amountExpected', null, { getters: false }));
+        return instObj;
+    });
+    // ----------------------------------------------------
+
+    res.json({ success: true, data: subObj });
 
   } catch (err) {
     console.error(err);
@@ -163,6 +206,7 @@ exports.getAllPayments = async (req, res) => {
     if (!activeYear) return res.json({ success: true, data: [] });
 
     // 2. Fetch all subscriptions for this year
+    // We use Mongoose docs here (not .lean()) to use the .get() method easily
     const subs = await Subscription.find({ club: clubId, year: activeYear._id })
       .populate({
         path: "member",
@@ -175,19 +219,24 @@ exports.getAllPayments = async (req, res) => {
     subs.forEach(sub => {
       const memberName = sub.member?.user?.name || "Unknown Member";
 
-      sub.installments.forEach(inst => {
-        if (inst.isPaid) {
-          allPayments.push({
-            subscriptionId: sub._id,
-            memberId: sub.member?._id,
-            memberName: memberName,
-            amount: inst.amountExpected,
-            date: inst.paidDate || sub.updatedAt, // Fallback date
-            weekNumber: inst.number,
-            type: "subscription"
-          });
-        }
-      });
+      if (sub.installments) {
+        sub.installments.forEach(inst => {
+          if (inst.isPaid) {
+            allPayments.push({
+              subscriptionId: sub._id,
+              memberId: sub.member?._id,
+              memberName: memberName,
+              
+              // 💰 FIX: Explicitly format to "50.00" string
+              amount: toClient(inst.get('amountExpected', null, { getters: false }) || 0),
+              
+              date: inst.paidDate || sub.updatedAt, 
+              weekNumber: inst.number,
+              type: "subscription"
+            });
+          }
+        });
+      }
     });
 
     // Sort by Date (Most recent first)

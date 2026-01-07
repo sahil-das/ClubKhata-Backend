@@ -1,8 +1,9 @@
 const MemberFee = require("../models/MemberFee");
 const FestivalYear = require("../models/FestivalYear");
 const Membership = require("../models/Membership");
-const User = require("../models/User"); // 👈 ADDED THIS IMPORT
+const User = require("../models/User"); 
 const { logAction } = require("../utils/auditLogger");
+const { toClient } = require("../utils/mongooseMoney"); // 👈 Ensure this is imported
 
 /**
  * @route POST /api/v1/member-fees
@@ -21,7 +22,7 @@ exports.createPayment = async (req, res) => {
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(404).json({ message: "No active festival year." });
 
-    // ✅ FETCH USER NAME FOR LOGS (Now this will work)
+    // ✅ FETCH USER NAME FOR LOGS
     const userObj = await User.findById(userId);
     const memberName = userObj ? userObj.name : "Unknown Member";
 
@@ -29,7 +30,7 @@ exports.createPayment = async (req, res) => {
       club: clubId,
       year: activeYear._id,
       user: userId,
-      amount,
+      amount, // Input is Rupees (e.g. 50), Setter saves Paisa (5000)
       collectedBy: adminId,
       notes
     });
@@ -42,7 +43,12 @@ exports.createPayment = async (req, res) => {
       details: { amount: amount, notes: notes }
     });
     
-    res.status(201).json({ success: true, message: "Payment recorded", data: fee });
+    // 💰 FIX: Send formatted Rupees to Frontend
+    // We get the raw integer (5000) -> convert to client string ("50.00")
+    const feeObj = fee.toObject();
+    feeObj.amount = toClient(fee.get('amount', null, { getters: false }));
+
+    res.status(201).json({ success: true, message: "Payment recorded", data: feeObj });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server error" });
@@ -64,7 +70,14 @@ exports.getAllFees = async (req, res) => {
       .populate("collectedBy", "name")
       .sort({ createdAt: -1 });
 
-    res.json({ success: true, data: fees });
+    // 💰 FIX: Format all records to Rupees string
+    const formattedFees = fees.map(f => {
+        const obj = f.toObject();
+        obj.amount = toClient(f.get('amount', null, { getters: false }));
+        return obj;
+    });
+
+    res.json({ success: true, data: formattedFees });
   } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
@@ -85,12 +98,12 @@ exports.getFeeSummary = async (req, res) => {
     // 2. Get All Members
     const memberships = await Membership.find({ club: clubId }).populate("user", "name email phone");
     
-    // 3. Aggregate Fees for this Year
+    // 3. Aggregate Fees for this Year (Returns Integers)
     const fees = await MemberFee.aggregate([
       { $match: { club: clubId, year: activeYear._id } },
       { $group: { 
           _id: "$user", 
-          totalPaid: { $sum: "$amount" },
+          totalPaid: { $sum: "$amount" }, // Sum of Integer Paise
           lastPaidAt: { $max: "$createdAt" },
           count: { $sum: 1 }
         } 
@@ -104,11 +117,16 @@ exports.getFeeSummary = async (req, res) => {
     const summary = memberships.map(m => {
         const userId = m.user._id.toString();
         const feeData = feeMap[userId];
+        const rawTotal = feeData?.totalPaid || 0; // Integer value
+
         return {
             memberId: userId,
             name: m.user.name,
             email: m.user.email,
-            totalPaid: feeData?.totalPaid || 0,
+            // 💰 Fix: Convert Integer to "50.00" string for display
+            totalPaid: toClient(rawTotal), 
+            // Keep raw for sorting
+            rawTotal: rawTotal,
             lastPaidAt: feeData?.lastPaidAt || null,
             transactionCount: feeData?.count || 0
         };
@@ -116,8 +134,8 @@ exports.getFeeSummary = async (req, res) => {
 
     // Sort: Unpaid first, then by Name
     summary.sort((a, b) => {
-        if (a.totalPaid === 0 && b.totalPaid > 0) return -1;
-        if (a.totalPaid > 0 && b.totalPaid === 0) return 1;
+        if (a.rawTotal === 0 && b.rawTotal > 0) return -1;
+        if (a.rawTotal > 0 && b.rawTotal === 0) return 1;
         return a.name.localeCompare(b.name);
     });
 
@@ -136,7 +154,7 @@ exports.deletePayment = async (req, res) => {
   try {
     // 1. Find the fee first (so we can log what we are deleting)
     const fee = await MemberFee.findOne({ _id: req.params.id, club: req.user.clubId })
-      .populate("user", "name"); // Get name for the log
+      .populate("user", "name"); 
 
     if (!fee) return res.status(404).json({ message: "Record not found" });
 
@@ -149,14 +167,14 @@ exports.deletePayment = async (req, res) => {
       action: "PAYMENT_DELETED",
       target: `Deleted Chanda: ${fee.user?.name || "Unknown User"}`,
       details: { 
-        amount: fee.amount, 
+        amount: fee.amount, // Log logic usually handles string/number fine
         originalDate: fee.createdAt 
       }
     });
 
     res.json({ success: true, message: "Record deleted" });
   } catch (err) {
-    console.error(err); // 👈 Added error logging
+    console.error(err); 
     res.status(500).json({ message: "Server error" });
   }
 };
@@ -170,19 +188,32 @@ exports.getMemberFees = async (req, res) => {
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
     if (!activeYear) return res.status(404).json({ message: "No active year" });
 
+    // Fetch records
     const fees = await MemberFee.find({ 
       club: clubId, 
       year: activeYear._id,
       user: userId 
     }).populate("collectedBy", "name");
 
-    const total = fees.reduce((sum, f) => sum + f.amount, 0);
+    // 💰 Fix: Calculate Total from Raw Integers to avoid string concatenation
+    const totalInt = fees.reduce((sum, f) => {
+      // Access raw value to avoid "50.00" + "50.00" = "50.0050.00"
+      const rawAmount = f.get('amount', null, { getters: false }) || 0;
+      return sum + rawAmount;
+    }, 0);
+
+    // 💰 Fix: Format records too
+    const formattedRecords = fees.map(f => {
+        const obj = f.toObject();
+        obj.amount = toClient(f.get('amount', null, { getters: false }));
+        return obj;
+    });
 
     res.json({ 
       success: true, 
       data: {
-        total,
-        records: fees
+        total: toClient(totalInt), // Format to "100.00"
+        records: formattedRecords
       } 
     });
 

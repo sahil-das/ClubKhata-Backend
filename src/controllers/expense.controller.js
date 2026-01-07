@@ -1,22 +1,35 @@
 const Expense = require("../models/Expense");
 const FestivalYear = require("../models/FestivalYear");
 const { logAction } = require("../utils/auditLogger");
-// 1. ADD EXPENSE (Log the Request)
+const { toClient } = require("../utils/mongooseMoney"); // 👈 IMPORT THIS
+
+// 1. ADD EXPENSE
 exports.addExpense = async (req, res) => {
   try {
     const { title, amount, category, description, date } = req.body;
     const { clubId, role } = req.user; 
 
+    // ✅ VALIDATION
+    if (!title || !title.trim()) {
+        return res.status(400).json({ message: "Expense title is required." });
+    }
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+        return res.status(400).json({ message: "Please enter a valid positive amount." });
+    }
+    if (!category) {
+        return res.status(400).json({ message: "Category is required." });
+    }
+
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
-    if (!activeYear) return res.status(400).json({ message: "No active festival year." });
+    if (!activeYear) return res.status(400).json({ message: "No active festival year found." });
 
     const initialStatus = role === "admin" ? "approved" : "pending";
 
     const newExpense = await Expense.create({
       club: clubId,
       year: activeYear._id,
-      title,
-      amount,
+      title: title.trim(),
+      amount: Number(amount), // Mongoose Money Setter handles this (Saves 5000)
       category,
       description,
       date: date || new Date(),
@@ -24,14 +37,13 @@ exports.addExpense = async (req, res) => {
       recordedBy: req.user.id
     });
 
-    // ✅ LOG 1: EXPENSE CREATED
-    // We log whether it was auto-approved (Admin) or just requested (Member)
+    // ✅ LOG
     const actionType = role === "admin" ? "CREATE_EXPENSE_APPROVED" : "CREATE_EXPENSE_REQUEST";
     
     await logAction({
       req,
       action: actionType,
-      target: `Expense: ${title} (₹${amount})`,
+      target: `Expense: ${title} (Rs.${amount})`,
       details: { 
         expenseId: newExpense._id, 
         category, 
@@ -39,9 +51,13 @@ exports.addExpense = async (req, res) => {
       }
     });
 
+    // 💰 FIX: Convert to Plain Object & Format Amount
+    const expenseObj = newExpense.toObject();
+    expenseObj.amount = toClient(newExpense.get('amount', null, { getters: false }));
+
     res.status(201).json({ 
       success: true, 
-      data: newExpense,
+      data: expenseObj,
       message: role === "admin" ? "Expense added." : "Expense submitted for approval."
     });
 
@@ -51,17 +67,16 @@ exports.addExpense = async (req, res) => {
   }
 };
 
-// 2. APPROVE / REJECT (Log the Decision)
+// 2. APPROVE / REJECT
 exports.updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status } = req.body; // 'approved' or 'rejected'
+    const { status } = req.body; 
 
     if (req.user.role !== "admin") {
       return res.status(403).json({ message: "Only Admins can approve expenses." });
     }
 
-    // Update the expense
     const expense = await Expense.findByIdAndUpdate(
       id, 
       { status }, 
@@ -70,48 +85,53 @@ exports.updateStatus = async (req, res) => {
 
     if (!expense) return res.status(404).json({ message: "Expense not found" });
 
-    // ✅ LOG 2: STATUS CHANGE
-    // This provides the critical "Audit Trail" of who authorized the money.
+    // ✅ LOG
     await logAction({
       req,
-      action: `EXPENSE_${status.toUpperCase()}`, // e.g., EXPENSE_APPROVED
+      action: `EXPENSE_${status.toUpperCase()}`,
       target: `Expense: ${expense.title}`,
       details: { 
-        amount: expense.amount,
+        amount: expense.amount, 
         expenseId: expense._id,
         newStatus: status
       }
     });
 
-    res.json({ success: true, data: expense });
+    // 💰 FIX: Format Response
+    const expenseObj = expense.toObject();
+    expenseObj.amount = toClient(expense.get('amount', null, { getters: false }));
+
+    res.json({ success: true, data: expenseObj });
 
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: "Server Error" });
   }
 };
-// 3. GET EXPENSES (Fixed: Only show Active Year)
+
+// 3. GET EXPENSES
 exports.getExpenses = async (req, res) => {
   try {
     const { clubId } = req.user;
-
-    // ✅ FIX: Find the Active Year first
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
 
-    // If no active year (closed), return empty list (clears the UI)
-    if (!activeYear) {
-      return res.json({ success: true, data: [] });
-    }
+    if (!activeYear) return res.json({ success: true, data: [] });
 
-    // ✅ FIX: Filter expenses by this Active Year ID
     const expenses = await Expense.find({ 
         club: clubId,
         year: activeYear._id 
       })
       .populate("recordedBy", "name")
       .sort({ date: -1 });
+    
+    // 💰 FIX: Map and Format Every Item
+    const formattedExpenses = expenses.map(e => {
+        const obj = e.toObject();
+        obj.amount = toClient(e.get('amount', null, { getters: false }));
+        return obj;
+    });
       
-    res.json({ success: true, data: expenses });
+    res.json({ success: true, data: formattedExpenses });
   } catch (err) {
     res.status(500).json({ message: "Server Error" });
   }
@@ -123,15 +143,12 @@ exports.deleteExpense = async (req, res) => {
     const { id } = req.params;
     const { clubId } = req.user;
 
-    // 1. Find and Delete in one step (returns the deleted doc)
+    // Find first to log
     const expense = await Expense.findOneAndDelete({ _id: id, club: clubId });
 
-    if (!expense) {
-      return res.status(404).json({ message: "Expense not found" });
-    }
+    if (!expense) return res.status(404).json({ message: "Expense not found" });
 
-    // ✅ LOG THE DELETION
-    // We can now safely access expense.title and expense.amount
+    // ✅ LOG
     await logAction({
       req,
       action: "DELETE_EXPENSE",

@@ -10,6 +10,7 @@ const migrate = async () => {
     console.log("🔌 Connected to DB for Migration...");
 
     const db = mongoose.connection.db;
+    console.log("🚀 Starting Migration to Integer Currency...");
 
     // Helper for Atomic Update with Rounding
     // Uses Aggregation Pipeline in Update to ensure 10.56 -> 1056 (not 1056.000001)
