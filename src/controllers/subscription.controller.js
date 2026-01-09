@@ -120,6 +120,7 @@ exports.payInstallment = async (req, res) => {
     if (!activeYear) throw new Error("No active festival year found.");
     if (activeYear.isClosed) throw new Error("Current year is closed for transactions.");
 
+    // 1. Fetch or Create Subscription
     let subDoc = null;
     if (subscriptionId) {
         subDoc = await Subscription.findById(subscriptionId).session(session);
@@ -128,6 +129,8 @@ exports.payInstallment = async (req, res) => {
     // --- CREATE-ON-PAY LOGIC ---
     if (!subDoc) {
         if (!memberId) throw new Error("First payment requires Member ID.");
+        
+        // Check if one already exists to avoid duplicates
         subDoc = await Subscription.findOne({ 
             club: clubId, 
             year: activeYear._id, 
@@ -135,26 +138,22 @@ exports.payInstallment = async (req, res) => {
         }).session(session);
 
         if (!subDoc) {
-            // Mongoose Creation (Setters work correctly on Create)
-            // 'amountPerInstallment' in activeYear is INTEGER (paise) if accessed via .get(..., getters:false)
-            // BUT here we access property direct which invokes getter -> "50.00"? 
-            // We need to be careful. Let's use raw to be safe.
+            // GET RAW INTEGER (Paise) e.g., 5000
             const targetAmountInt = activeYear.get('amountPerInstallment', null, { getters: false }) || 0;
             
-            // To create, we need to pass RUPEES if our schema setter expects it.
-            // Or we can rely on the fact that if we pass an object to create, setters run.
-            // Let's explicitly calculate expected Rupees.
+            // CONVERT TO RUPEES (Float) for Creation
+            // Reason: Mongoose Setters will run on .create(), so we pass 50.00 -> It stores 5000
             const targetAmountRupees = targetAmountInt / 100;
+            const totalDueRupees = (activeYear.totalInstallments * targetAmountInt) / 100;
 
             const installments = [];
             for (let i = 1; i <= activeYear.totalInstallments; i++) {
                 installments.push({ 
                     number: i, 
-                    amountExpected: targetAmountRupees, // Schema setter will multiply by 100 -> correct integer
+                    amountExpected: targetAmountRupees, // Setter will x100
                     isPaid: false 
                 });
             }
-            const totalDueRupees = (activeYear.totalInstallments * targetAmountInt) / 100;
 
             const newSubs = await Subscription.create([{
                 club: clubId,
@@ -169,17 +168,18 @@ exports.payInstallment = async (req, res) => {
         }
     }
 
-    // Resolve Installment
+    // 2. Resolve Installment
     const instIndex = subDoc.installments.findIndex(i => i.number === parseInt(installmentNumber));
     if (instIndex === -1) throw new Error(`Installment #${installmentNumber} not found.`);
+    
     const installment = subDoc.installments[instIndex];
     
-    // Get Raw Paisa Value from DB
+    // GET RAW INTEGER (Paise) from DB e.g., 5000
     const amountValRaw = installment.get('amountExpected', null, { getters: false });
     
-    // ⚠️ CRITICAL MATH FIX:
-    // Mongoose setters on $inc will multiply by 100.
-    // If we want to add 5000 paise, we must pass 50 (Rupees) to the update.
+    // CONVERT TO RUPEES for Update
+    // Reason: We use runValidators: true, so $inc will trigger the Setter (x100)
+    // We pass 50 -> Setter makes it 5000
     const amountInRupees = amountValRaw / 100;
 
     const isCurrentlyPaid = installment.isPaid;
@@ -198,8 +198,8 @@ exports.payInstallment = async (req, res) => {
                     "installments.$.collectedBy": null
                 },
                 $inc: { 
-                    totalPaid: -amountInRupees, // Pass Rupees (-50) -> Setter makes it -5000
-                    totalDue: amountInRupees    // Pass Rupees (50) -> Setter makes it 5000
+                    totalPaid: -amountInRupees, // Pass -50 -> Setter stores -5000
+                    totalDue: amountInRupees    // Pass 50 -> Setter stores 5000
                 }
             },
             { session, new: true, runValidators: true } 
@@ -218,23 +218,17 @@ exports.payInstallment = async (req, res) => {
                     "installments.$.collectedBy": adminUserId 
                 },
                 $inc: { 
-                    totalPaid: amountInRupees, // Pass Rupees (50) -> Setter makes it 5000
-                    totalDue: -amountInRupees  // Pass Rupees (-50) -> Setter makes it -5000
+                    totalPaid: amountInRupees, // Pass 50 -> Setter stores 5000
+                    totalDue: -amountInRupees  // Pass -50 -> Setter stores -5000
                 }
             },
             { session, new: true, runValidators: true }
         );
     }
 
-    // 4. Audit Log
-    await subDoc.populate({
-        path: "member",
-        populate: {
-            path: "user",
-            select: "name"
-        }
-    });
-
+    // 3. Audit Log
+    // We populate only for the log message
+    await subDoc.populate({ path: "member", populate: { path: "user", select: "name" } });
     const memberName = subDoc.member?.user?.name || "Unknown Member";
     
     await logAction({
@@ -245,12 +239,13 @@ exports.payInstallment = async (req, res) => {
             subscriptionId: subDoc._id,
             installment: installmentNumber,
             memberName: memberName,
-            amount: toClient(amountValRaw),
+            amount: toClient(amountValRaw), // Display "50.00" in logs
             status: auditAction === "SUBSCRIPTION_PAY" ? "Paid" : "Reverted"
-        }
+        },
+        session // <--- 🚨 CRITICAL: Passing session binds log to transaction
     });
 
-    // 5. Fetch FRESH data to return
+    // 4. Return Fresh Data
     const updatedSub = await Subscription.findById(subDoc._id)
         .populate("year")
         .populate("member", "name")

@@ -2,25 +2,24 @@ const AuditLog = require("../models/AuditLog");
 
 /**
  * Records an activity in the database.
- * @param {Object} req - Express Request Object (to get user/club info)
+ * CRITICAL FIX: Removed try/catch to ensure transaction aborts if logging fails.
+ * * @param {Object} req - Express Request Object
  * @param {String} action - Short code (e.g. "UPDATE_SETTINGS")
- * @param {String} target - Human readable target (e.g. "Settings")
+ * @param {String} target - Human readable target
  * @param {Object} details - Optional JSON data
+ * @param {Object} session - (Optional) Mongoose Transaction Session
  */
-exports.logAction = async ({ req, action, target, details }) => {
-  try {
-    if (!req.user || !req.user.clubId) return;
+exports.logAction = async ({ req, action, target, details, session = null }) => {
+  // 1. Basic Context Check
+  if (!req.user || !req.user.clubId) return;
 
-    await AuditLog.create({
-      club: req.user.clubId,
-      actor: req.user.id,
-      action,
-      target,
-      details,
-      ip: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress
-    });
-  } catch (err) {
-    console.error("Audit Log Warning:", err.message);
-    // We intentionally catch errors so logging failure doesn't stop the main request
-  }
+  // 2. Create Log (Passed session ensures atomicity)
+  await AuditLog.create([{
+    club: req.user.clubId,
+    actor: req.user.id,
+    action,
+    target,
+    details,
+    ip: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress
+  }], { session });
 };
