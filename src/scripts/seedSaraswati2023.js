@@ -5,21 +5,21 @@ const mongoose = require("mongoose");
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/club_commitee_saas";
 
 // 2. HARDCODED IDS (FROM YOUR DATA)
-const CLUB_ID = "6960c2a329b02c09594be751";
-const ADMIN_ID = "6960c2a329b02c09594be74f"; // Sahil
+const CLUB_ID = "69611aeef52a40d5eb23371b";
+const ADMIN_ID = "69611aeef52a40d5eb233719"; // Sahil
 
 // Members Map
 const MEMBERS = [
-  { name: "Sahil", id: "6960c2a329b02c09594be74f" },
-  { name: "Ayush", id: "6960c30529b02c09594be79b" },
-  { name: "Ashish", id: "6960c35829b02c09594be7a9" },
-  { name: "Golu", id: "6960c3ad29b02c09594be7b7" },
-  { name: "Gourav", id: "6960c3ce29b02c09594be7c5" },
-  { name: "Mohit", id: "6960c41a29b02c09594be7e1" },
-  { name: "Meghnath", id: "6960c43e29b02c09594be7ef" },
-  { name: "Nayan", id: "6960c45f29b02c09594be7fd" },
-  { name: "Piyush", id: "6960c48829b02c09594be80b" },
-  { name: "Shubhojeet", id: "6960c4b429b02c09594be819" }
+  { name: "Sahil", id: "69611aeef52a40d5eb233719" },
+  { name: "Ayush", id: "69611b3af52a40d5eb233759" },
+  { name: "Ashish", id: "69611b62f52a40d5eb233767" },
+  { name: "Golu", id: "69611b77f52a40d5eb233775" },
+  { name: "Gourav", id: "69611b95f52a40d5eb233783" },
+  { name: "Mohit", id: "69611baef52a40d5eb233791" },
+  { name: "Meghnath", id: "69611bcdf52a40d5eb23379f" },
+  { name: "Nayan", id: "69611be1f52a40d5eb2337ad" },
+  { name: "Piyush", id: "69611bf3f52a40d5eb2337bb" },
+  { name: "Shubhojeet", id: "69611c15f52a40d5eb2337c9" }
 ];
 
 // 3. MODELS
@@ -162,7 +162,7 @@ const seed = async () => {
     }
 
     // 6. CALCULATE & UPDATE CLOSING BALANCE
-    const totalDonations = 1160;
+    const totalDonations = 1366;
     const totalFees = 200 * MEMBERS.length; // 2000
     const totalSubs = 500 * MEMBERS.length; // 5000
     const totalIncome = totalDonations + totalFees + totalSubs; // 8160

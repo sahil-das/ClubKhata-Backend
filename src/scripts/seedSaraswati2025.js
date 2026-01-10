@@ -6,26 +6,27 @@ const bcrypt = require("bcryptjs");
 const MONGO_URI = process.env.MONGO_URI || "mongodb://localhost:27017/club_commitee_saas";
 
 // 2. HARDCODED IDS
-const CLUB_ID = "6960c2a329b02c09594be751";
-const ADMIN_ID = "6960c2a329b02c09594be74f"; // Sahil
+// 2. HARDCODED IDS
+const CLUB_ID = "69611aeef52a40d5eb23371b";
+const ADMIN_ID = "69611aeef52a40d5eb233719"; // Sahil
 
-// Members Map (Mohit Removed)
+// Members Map
 const MEMBERS = [
   // Existing
-  { name: "Sahil", id: "6960c2a329b02c09594be74f" },
-  { name: "Ayush", id: "6960c30529b02c09594be79b" },
-  { name: "Ashish", id: "6960c35829b02c09594be7a9" },
-  { name: "Golu", id: "6960c3ad29b02c09594be7b7" },
-  { name: "Gourav", id: "6960c3ce29b02c09594be7c5" },
-  // Mohit removed
-  { name: "Meghnath", id: "6960c43e29b02c09594be7ef" },
-  { name: "Nayan", id: "6960c45f29b02c09594be7fd" },
-  { name: "Piyush", id: "6960c48829b02c09594be80b" },
-  { name: "Shubhojeet", id: "6960c4b429b02c09594be819" },
-  // Newer
-  { name: "Ankit", id: "6960dd3d09f8e5d112495226" },
-  { name: "Karan", id: "6960dd3d09f8e5d112495299" }
+  { name: "Sahil", id: "69611aeef52a40d5eb233719" },
+  { name: "Ayush", id: "69611b3af52a40d5eb233759" },
+  { name: "Ashish", id: "69611b62f52a40d5eb233767" },
+  { name: "Golu", id: "69611b77f52a40d5eb233775" },
+  { name: "Gourav", id: "69611b95f52a40d5eb233783" },
+  { name: "Meghnath", id: "69611bcdf52a40d5eb23379f" },
+  { name: "Nayan", id: "69611be1f52a40d5eb2337ad" },
+  { name: "Piyush", id: "69611bf3f52a40d5eb2337bb" },
+  { name: "Shubhojeet", id: "69611c15f52a40d5eb2337c9" },
+  // New
+  { name: "Ankit", id: "69611f3814f36276e6761aca" },
+  { name: "Karan", id: "69611f2914f36276e6761abc" }
 ];
+
 
 // 3. MODELS
 const FestivalYear = require("../models/FestivalYear");

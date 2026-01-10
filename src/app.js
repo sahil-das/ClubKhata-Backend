@@ -4,6 +4,7 @@ const helmet = require("helmet");
 const connectDB = require("./config/db");
 const { PORT } = require("./config/env");
 const { globalLimiter, authLimiter } = require("./middleware/limiters");
+const logger = require("./utils/logger");
 
 // Routes
 const authRoutes = require("./routes/auth.routes");
