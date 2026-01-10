@@ -5,8 +5,8 @@ const skipOptions = (req) => req.method === "OPTIONS";
 
 // 1. Global Limiter
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 300,
+  windowMs: 15 * 60 * 1000, 
+  max: 900, 
   standardHeaders: true,
   legacyHeaders: false,
   skip: skipOptions,
@@ -15,8 +15,8 @@ const globalLimiter = rateLimit({
 
 // 2. Auth Limiter (Login/Register)
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5, // ← your comment says 5; 775 was unsafe
+  windowMs: 15 * 60 * 1000, 
+  max: 900, 
   standardHeaders: true,
   legacyHeaders: false,
   skip: skipOptions,
