@@ -1,9 +1,50 @@
+const mongoose = require("mongoose");
 const Subscription = require("../models/Subscription");
 const FestivalYear = require("../models/FestivalYear");
-const Membership = require("../models/Membership");
+const Membership = require("../models/Membership"); // Added missing import
 const { logAction } = require("../utils/auditLogger");
 const { toClient } = require("../utils/mongooseMoney");
-const mongoose = require("mongoose");
+
+// ==========================================
+// HELPER: Recalculate Totals (The Fix)
+// ==========================================
+const recalculateTotals = (subDoc) => {
+    let calculatedTotalPaid = 0;
+    let calculatedTotalDue = 0;
+
+    if (subDoc.installments && subDoc.installments.length > 0) {
+        subDoc.installments.forEach(inst => {
+            // 1. Get the value safely (Handle Mongoose Doc vs Plain Object)
+            // We use .get() with getters: true to ensure we get "Rupees" (Float) 
+            // because the Schema Setter will convert it back to Paise (Int) on save.
+            let val;
+            if (typeof inst.get === 'function') {
+                val = inst.get('amountExpected', null, { getters: true });
+            } else {
+                val = inst.amountExpected;
+            }
+
+            // 2. FORCE Number type (Fixes the NaN crash)
+            const safeAmount = Number(val);
+            const finalAmount = isNaN(safeAmount) ? 0 : safeAmount;
+
+            if (inst.isPaid) {
+                calculatedTotalPaid += finalAmount;
+            } else {
+                calculatedTotalDue += finalAmount;
+            }
+        });
+    }
+
+    // 3. Assign Result (Mongoose Setter will run here: Rupees -> Paise)
+    subDoc.totalPaid = calculatedTotalPaid;
+    subDoc.totalDue = calculatedTotalDue;
+    
+    return subDoc;
+};
+// ==========================================
+// CONTROLLERS
+// ==========================================
 
 exports.getMemberSubscription = async (req, res) => {
   try {
@@ -15,6 +56,7 @@ exports.getMemberSubscription = async (req, res) => {
 
     const activeYear = await FestivalYear.findOne({ club: clubId, isActive: true });
 
+    // 1. Handle No Active Year (Return Empty Structure)
     if (!activeYear) {
         return res.json({
             success: true,
@@ -22,20 +64,18 @@ exports.getMemberSubscription = async (req, res) => {
                 member: {
                     memberName: memberShip.user.name,
                     email: memberShip.user.email,
-                    personalEmail: memberShip.user.personalEmail,
                     phone: memberShip.user.phone,
                     role: memberShip.role,
                     userId: memberShip.user._id,
                     joinedAt: memberShip.joinedAt
-
                 },
                 subscription: null,
-                year: null,
-                rules: null
+                year: null
             }
         });
     }
 
+    // 2. Find Existing Subscription
     let sub = await Subscription.findOne({ 
       club: clubId, 
       year: activeYear._id, 
@@ -45,6 +85,7 @@ exports.getMemberSubscription = async (req, res) => {
     const targetAmountInt = activeYear.get('amountPerInstallment', null, { getters: false }) || 0;
     const targetCount = activeYear.totalInstallments || 52;
 
+    // 3. Generate Virtual Subscription (Preview) if none exists
     if (!sub) {
       const installments = [];
       for (let i = 1; i <= targetCount; i++) {
@@ -63,6 +104,8 @@ exports.getMemberSubscription = async (req, res) => {
       };
     }
 
+    // 4. Format for Client
+    // Detect if 'sub' is a Mongoose Doc or a plain Object (Virtual)
     const isDoc = typeof sub.get === 'function';
     const getRaw = (obj, field) => isDoc ? obj.get(field, null, { getters: false }) : obj[field];
 
@@ -74,6 +117,7 @@ exports.getMemberSubscription = async (req, res) => {
             number: inst.number,
             isPaid: inst.isPaid,
             paidDate: inst.paidDate,
+            // Handle nested getter for amountExpected
             amountExpected: toClient(isDoc ? inst.get('amountExpected', null, { getters: false }) : inst.amountExpected)
         }))
     };
@@ -85,11 +129,10 @@ exports.getMemberSubscription = async (req, res) => {
         member: {
             memberName: memberShip.user.name,
             email: memberShip.user.email,
-            personalEmail: memberShip.user.personalEmail, 
             phone: memberShip.user.phone, 
             role: memberShip.role,        
             userId: memberShip.user._id,
-            joinedAt: memberShip.joinedAt   
+            joinedAt: memberShip.joinedAt  
         },
         year: {
             name: activeYear.name,
@@ -106,7 +149,7 @@ exports.getMemberSubscription = async (req, res) => {
 };
 
 /**
- * @desc Pay Installment (FIXED: SAFE MONGOOSE TRANSACTION)
+ * @desc Pay/Undo Installment (Fixed: Recalculates Totals)
  * @route POST /api/v1/subscriptions/pay
  */
 exports.payInstallment = async (req, res) => {
@@ -122,17 +165,16 @@ exports.payInstallment = async (req, res) => {
     if (!activeYear) throw new Error("No active festival year found.");
     if (activeYear.isClosed) throw new Error("Current year is closed for transactions.");
 
-    // 1. Fetch or Create Subscription
+    // 1. Fetch Subscription
     let subDoc = null;
     if (subscriptionId) {
         subDoc = await Subscription.findById(subscriptionId).session(session);
     }
 
-    // --- CREATE-ON-PAY LOGIC ---
+    // 2. Auto-Create if Missing (First Payment Logic)
     if (!subDoc) {
         if (!memberId) throw new Error("First payment requires Member ID.");
         
-        // Check if one already exists to avoid duplicates
         subDoc = await Subscription.findOne({ 
             club: clubId, 
             year: activeYear._id, 
@@ -140,19 +182,15 @@ exports.payInstallment = async (req, res) => {
         }).session(session);
 
         if (!subDoc) {
-            // GET RAW INTEGER (Paise) e.g., 5000
+            // Get raw integer (Paise) -> Convert to Rupees (Float)
             const targetAmountInt = activeYear.get('amountPerInstallment', null, { getters: false }) || 0;
-            
-            // CONVERT TO RUPEES (Float) for Creation
-            // Reason: Mongoose Setters will run on .create(), so we pass 50.00 -> It stores 5000
             const targetAmountRupees = targetAmountInt / 100;
-            const totalDueRupees = (activeYear.totalInstallments * targetAmountInt) / 100;
-
+            
             const installments = [];
             for (let i = 1; i <= activeYear.totalInstallments; i++) {
                 installments.push({ 
                     number: i, 
-                    amountExpected: targetAmountRupees, // Setter will x100
+                    amountExpected: targetAmountRupees, 
                     isPaid: false 
                 });
             }
@@ -162,7 +200,7 @@ exports.payInstallment = async (req, res) => {
                 year: activeYear._id,
                 member: memberId,
                 totalPaid: 0,
-                totalDue: totalDueRupees,
+                totalDue: (activeYear.totalInstallments * targetAmountRupees),
                 installments: installments
             }], { session });
             
@@ -170,69 +208,54 @@ exports.payInstallment = async (req, res) => {
         }
     }
 
-    // 2. Resolve Installment
+    // 3. Find the Installment
     const instIndex = subDoc.installments.findIndex(i => i.number === parseInt(installmentNumber));
     if (instIndex === -1) throw new Error(`Installment #${installmentNumber} not found.`);
     
     const installment = subDoc.installments[instIndex];
-    
-    // GET RAW INTEGER (Paise) from DB e.g., 5000
-    const amountValRaw = installment.get('amountExpected', null, { getters: false });
-    
-    // CONVERT TO RUPEES for Update
-    // Reason: We use runValidators: true, so $inc will trigger the Setter (x100)
-    // We pass 50 -> Setter makes it 5000
-    const amountInRupees = amountValRaw / 100;
-
     const isCurrentlyPaid = installment.isPaid;
     let auditAction = ""; 
 
+    // 4. Toggle Status & Update Data
     if (isCurrentlyPaid) {
-        // === UNDO PAYMENT ===
+        // === UNDO ===
         auditAction = "SUBSCRIPTION_UNDO";
+        installment.isPaid = false;
+        installment.paidDate = null;
+        installment.collectedBy = null;
         
-        await Subscription.findOneAndUpdate(
-            { _id: subDoc._id, "installments.number": parseInt(installmentNumber) },
-            { 
-                $set: { 
-                    "installments.$.isPaid": false,
-                    "installments.$.paidDate": null,
-                    "installments.$.collectedBy": null
-                },
-                $inc: { 
-                    totalPaid: -amountInRupees, // Pass -50 -> Setter stores -5000
-                    totalDue: amountInRupees    // Pass 50 -> Setter stores 5000
-                }
-            },
-            { session, new: true, runValidators: true } 
-        );
+        // When undoing, reset the expected amount to the CURRENT Year's price
+        // This handles cases where price increased after they paid
+        const currentYearPriceRaw = activeYear.get('amountPerInstallment', null, { getters: false }) || 0;
+        installment.amountExpected = currentYearPriceRaw / 100;
 
     } else {
-        // === PROCESS PAYMENT ===
+        // === PAY ===
         auditAction = "SUBSCRIPTION_PAY";
-
-        await Subscription.findOneAndUpdate(
-            { _id: subDoc._id, "installments.number": parseInt(installmentNumber) },
-            { 
-                $set: { 
-                    "installments.$.isPaid": true,
-                    "installments.$.paidDate": new Date(),
-                    "installments.$.collectedBy": adminUserId 
-                },
-                $inc: { 
-                    totalPaid: amountInRupees, // Pass 50 -> Setter stores 5000
-                    totalDue: -amountInRupees  // Pass -50 -> Setter stores -5000
-                }
-            },
-            { session, new: true, runValidators: true }
-        );
+        installment.isPaid = true;
+        installment.paidDate = new Date();
+        installment.collectedBy = adminUserId;
     }
 
-    // 3. Audit Log
-    // We populate only for the log message
+    // 5. CRITICAL FIX: Run the Robust Recalculation
+    recalculateTotals(subDoc);
+
+    // 6. Save
+    subDoc.markModified('installments');
+    await subDoc.save({ session });
+
+    // 7. Audit Log
     await subDoc.populate({ path: "member", populate: { path: "user", select: "name" } });
     const memberName = subDoc.member?.user?.name || "Unknown Member";
     
+    // Helper to get raw log amount
+    let logAmount = 0;
+    if (typeof installment.get === 'function') {
+        logAmount = installment.get('amountExpected', null, { getters: true });
+    } else {
+        logAmount = installment.amountExpected;
+    }
+
     await logAction({
         req,
         action: auditAction,
@@ -241,13 +264,15 @@ exports.payInstallment = async (req, res) => {
             subscriptionId: subDoc._id,
             installment: installmentNumber,
             memberName: memberName,
-            amount: toClient(amountValRaw), // Display "50.00" in logs
-            status: auditAction === "SUBSCRIPTION_PAY" ? "Paid" : "Reverted"
+            amount: logAmount,
+            status: auditAction === "SUBSCRIPTION_PAY" ? "Paid" : "Reverted",
+            newTotalPaid: subDoc.totalPaid,
+            newTotalDue: subDoc.totalDue
         },
-        session // <--- 🚨 CRITICAL: Passing session binds log to transaction
+        session 
     });
 
-    // 4. Return Fresh Data
+    // 8. Return Fresh Data
     const updatedSub = await Subscription.findById(subDoc._id)
         .populate("year")
         .populate("member", "name")
@@ -271,7 +296,6 @@ exports.payInstallment = async (req, res) => {
     res.status(500).json({ message: err.message || "Payment failed" });
   }
 };
-
 exports.getAllPayments = async (req, res) => {
   try {
     const { clubId } = req.user;
@@ -280,6 +304,8 @@ exports.getAllPayments = async (req, res) => {
       { $match: { club: new mongoose.Types.ObjectId(clubId) } },
       { $unwind: "$installments" },
       { $match: { "installments.isPaid": true } },
+      
+      // Lookup Member
       {
         $lookup: {
           from: "memberships", 
@@ -289,6 +315,8 @@ exports.getAllPayments = async (req, res) => {
         }
       },
       { $unwind: "$memberDetails" },
+      
+      // Lookup User (for Name)
       {
         $lookup: {
             from: "users",
@@ -298,6 +326,9 @@ exports.getAllPayments = async (req, res) => {
         }
       },
       { $unwind: "$userDetails" },
+      
+      
+
       { $sort: { "installments.paidDate": -1 } },
       {
         $project: {
@@ -305,6 +336,7 @@ exports.getAllPayments = async (req, res) => {
           subscriptionId: "$_id",
           memberName: "$userDetails.name",
           installmentNumber: "$installments.number",
+          // Convert Paise to Rupees for Client
           amount: { $divide: ["$installments.amountExpected", 100] }, 
           date: "$installments.paidDate",
           collectedBy: "$installments.collectedBy"

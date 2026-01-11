@@ -12,15 +12,11 @@ const { toClient } = require("../utils/mongooseMoney");
 const formatYear = (yearDoc) => {
   if (!yearDoc) return null;
   const obj = yearDoc.toObject ? yearDoc.toObject() : yearDoc;
-  
-  // Safe getters for money fields
   const getVal = (field) => yearDoc.get ? yearDoc.get(field, null, { getters: false }) : obj[field];
   
   obj.amountPerInstallment = toClient(getVal('amountPerInstallment') || 0);
   obj.openingBalance = toClient(getVal('openingBalance') || 0);
   obj.closingBalance = toClient(getVal('closingBalance') || 0);
-  obj.targetAmount = toClient(getVal('targetAmount') || 0); // Legacy support if field exists
-
   return obj;
 };
 
@@ -28,18 +24,12 @@ const formatYear = (yearDoc) => {
 const checkOverlap = async (clubId, startDate, endDate, excludeId = null, session = null) => {
   const start = new Date(startDate);
   const end = new Date(endDate);
-
   const query = {
     club: clubId,
-    // Overlap Logic: (StartA <= EndB) and (EndA >= StartB)
     startDate: { $lte: end },
     endDate: { $gte: start }
   };
-
-  if (excludeId) {
-    query._id = { $ne: excludeId };
-  }
-
+  if (excludeId) query._id = { $ne: excludeId };
   return await FestivalYear.findOne(query).session(session);
 };
 
@@ -48,7 +38,7 @@ function generateInstallments(count, amount, startNumber = 1) {
     for (let i = 0; i < count; i++) {
         arr.push({
             number: startNumber + i,
-            amountExpected: amount, // Float: Schema setter will convert to Integer
+            amountExpected: amount,
             isPaid: false,
             paidDate: null,
             collectedBy: null
@@ -57,70 +47,71 @@ function generateInstallments(count, amount, startNumber = 1) {
     return arr;
 }
 
-// ✅ ADDED: session parameter for safety
-async function adjustSubscriptions({ yearId, newFreq, newTotal, newAmount }, session) {
+// ==========================================
+// 1. CORE HELPER: Adjust Subscriptions Safely
+// ==========================================
+async function adjustSubscriptions({ yearId, newTotal, newAmount }, session) {
+    // 1. Safety: Ensure newAmount is a number
+    const safeNewAmount = Number(newAmount) || 0; 
+
     const subs = await Subscription.find({ year: yearId }).session(session);
     if (subs.length === 0) return;
 
     for (const sub of subs) {
         let installments = sub.installments;
 
-        // 1. Handle Frequency Change to "None"
-        if (newFreq === 'none') {
-            installments = [];
+        // A. Handle Array Size (Add/Remove Weeks)
+        if (newTotal > installments.length) {
+            // Add new weeks
+            const startNum = installments.length + 1;
+            const addedCount = newTotal - installments.length;
+            const newItems = generateInstallments(addedCount, safeNewAmount, startNum);
+            installments = [...installments, ...newItems];
         } 
-        // 2. Handle Switch from "None" to Weekly/Monthly
-        else if (installments.length === 0 && newFreq !== 'none') {
-            installments = generateInstallments(newTotal, newAmount);
-        }
-        // 3. Handle Adjustment of Existing Installments
-        else {
-            // A. Increase Weeks
-            if (newTotal > installments.length) {
-                const startNum = installments.length + 1;
-                const addedCount = newTotal - installments.length;
-                const newItems = generateInstallments(addedCount, newAmount, startNum);
-                installments = [...installments, ...newItems];
-            }
-            // B. Reduce Weeks
-            else if (newTotal < installments.length) {
-                // Safety: Check if we are deleting paid installments
-                const removed = installments.slice(newTotal);
-                const hasPaidRemoved = removed.some(inst => inst.isPaid);
-                
-                // If paid items are being removed, we cannot proceed (Data Loss Risk)
-                if (hasPaidRemoved) {
-                    throw new Error("Cannot reduce installments. Some members have already paid for the weeks you are trying to remove.");
-                }
-
-                installments = installments.slice(0, newTotal);
-            }
-
-            // C. Update Amount for ALL pending/future installments
-            installments.forEach(inst => {
-                if (!inst.isPaid) {
-                    inst.amountExpected = newAmount;
-                }
-            });
+        else if (newTotal < installments.length) {
+            installments = installments.slice(0, newTotal);
         }
 
-        // Recalculate Totals
-        // Note: newAmount is in Rupees (float). Sub schema setters handle conversion.
-        const paidCount = installments.filter(i => i.isPaid).length;
-        
-        const dueCount = installments.length - paidCount;
-        
+        // B. THE FIX: Robust Calculation Logic
+        let calculatedTotalPaid = 0;
+        let calculatedTotalDue = 0;
+
+        installments.forEach(inst => {
+            // 1. Safely extract existing amount
+            // Use .get() if available to handle Mongoose getters, otherwise direct access
+            let currentValRaw;
+            if (typeof inst.get === 'function') {
+                currentValRaw = inst.get('amountExpected', null, { getters: true });
+            } else {
+                currentValRaw = inst.amountExpected;
+            }
+
+            // 2. FORCE Number type (Prevent NaN crash)
+            const currentValSafe = Number(currentValRaw);
+            const existingAmount = isNaN(currentValSafe) ? 0 : currentValSafe;
+
+            if (inst.isPaid) {
+                // ✅ PAST (Paid): Keep history. Add EXISTING value.
+                calculatedTotalPaid += existingAmount;
+            } else {
+                // ✅ FUTURE (Unpaid): Update to NEW price.
+                inst.amountExpected = safeNewAmount;
+                // Add NEW value
+                calculatedTotalDue += safeNewAmount;
+            }
+        });
+
+        // C. Apply Logic (Safe Assignment)
         sub.installments = installments;
-        sub.totalDue = dueCount * newAmount; 
         
-        // Recalculate totalPaid based on integer values in DB if possible, or re-sum
-        const newTotalPaid = installments.reduce((sum, i) => sum + (i.isPaid ? i.amountExpected : 0), 0);
-        sub.totalPaid = newTotalPaid;
+        // Final NaN check before assignment
+        sub.totalPaid = isNaN(calculatedTotalPaid) ? 0 : calculatedTotalPaid;
+        sub.totalDue = isNaN(calculatedTotalDue) ? 0 : calculatedTotalDue;
 
+        sub.markModified('installments');
         await sub.save({ session });
     }
 }
-
 // ==========================================
 // CONTROLLERS
 // ==========================================
@@ -149,7 +140,7 @@ exports.createYear = async (req, res) => {
         throw new Error("Start Date must be before End Date.");
     }
 
-    // 2. Check Overlaps (Pass session)
+    // 2. Check Overlaps
     const conflict = await checkOverlap(clubId, startDate, endDate, null, session);
     if (conflict) {
         throw new Error(`Dates overlap with existing year: '${conflict.name}'`);
@@ -172,18 +163,15 @@ exports.createYear = async (req, res) => {
     // 5. Calculate Opening Balance
     let finalOpeningBalance = 0;
     if (previousYear) {
-       // Calculate actual cash-in-hand from previous year
        const calcBal = await calculateBalance(previousYear._id, previousYear.openingBalance);
        finalOpeningBalance = Number(calcBal) || 0;
 
-       // Save the closing balance to the old year record
        await FestivalYear.updateOne(
            { _id: previousYear._id }, 
            { closingBalance: finalOpeningBalance },
            { session }
        );
     } else {
-       // First year ever? User can provide manual opening balance
        if (openingBalance !== undefined && openingBalance !== "") {
            finalOpeningBalance = Number(openingBalance);
        }
@@ -292,90 +280,81 @@ exports.updateYear = async (req, res) => {
       subscriptionFrequency, totalInstallments, amountPerInstallment 
     } = req.body;
 
+    // 1. Fetch Existing Year
     const yearDoc = await FestivalYear.findOne({ _id: id, club: clubId }).session(session);
     if (!yearDoc) throw new Error("Year not found");
     if (yearDoc.isClosed) throw new Error("Cannot update a closed year.");
 
-    // 1. Validate Dates & Overlaps
-    let newStart = yearDoc.startDate;
-    let newEnd = yearDoc.endDate;
-
-    if (startDate) newStart = new Date(startDate);
-    if (endDate) newEnd = new Date(endDate);
-
-    if (newStart >= newEnd) throw new Error("Start Date must be before End Date.");
-
-    if (startDate || endDate) {
-        // Pass session to checkOverlap
-        const conflict = await checkOverlap(clubId, newStart, newEnd, id, session);
-        if (conflict) {
-            throw new Error(`Dates overlap with existing year: '${conflict.name}'`);
-        }
-    }
-
-    // 2. Prepare Config Changes
+    // 2. Setup Config Variables
     const currentFreq = yearDoc.subscriptionFrequency;
     const currentTotal = yearDoc.totalInstallments;
-    // Get raw integer
+    // Get raw amount (paise) -> float (rupees)
     const currentAmountRaw = yearDoc.get('amountPerInstallment', null, { getters: false });
-    const currentAmount = currentAmountRaw / 100; // Convert integer to float for comparison
+    const currentAmount = currentAmountRaw ? currentAmountRaw / 100 : 0; 
 
     const newFreq = subscriptionFrequency || currentFreq;
-    const newTotal = Number(totalInstallments) || currentTotal;
     
+    // 3. Logic for Total Installments
+    let newTotal = currentTotal;
+
+    if (newFreq === 'monthly') {
+        newTotal = 12; // Force 12 for monthly
+    } else if (newFreq === 'none') {
+        newTotal = 0;
+    } else {
+        // Weekly: Use input or keep old
+        newTotal = totalInstallments ? Number(totalInstallments) : currentTotal;
+    }
+
+    // 4. Logic for Amount
     let newAmount = currentAmount;
     if (amountPerInstallment !== undefined && amountPerInstallment !== "") {
         newAmount = Number(amountPerInstallment);
     }
 
-    const freqChanged = newFreq !== currentFreq;
-    const durationChanged = newTotal !== currentTotal;
-    const amountChanged = Math.abs(newAmount - currentAmount) > 0.001;
-
-    // 3. Safety Checks for Structural Changes
-    // Need to check this with session to ensure no one is paying RIGHT NOW
-    const subsWithPayments = await Subscription.countDocuments({
-        year: id,
-        "installments.isPaid": true
+    // 5. CRITICAL CHECKS
+    const hasAnyPayments = await Subscription.exists({ 
+        year: id, 
+        "installments.isPaid": true 
     }).session(session);
 
-    if (freqChanged && subsWithPayments > 0) {
-        throw new Error(`Cannot change Frequency (Weekly/Monthly) because payments have already been recorded.`);
+    // Rule: Block Frequency Change if Payments Exist
+    if (newFreq !== currentFreq && hasAnyPayments) {
+        throw new Error(`Cannot switch from ${currentFreq} to ${newFreq} because payments have already been collected.`);
     }
 
-    if (durationChanged && newTotal < currentTotal) {
-        // If reducing weeks, ensure no payments exist in the truncated period
-        const conflict = await Subscription.findOne({
-            year: id,
-            installments: {
-                $elemMatch: {
-                    number: { $gt: newTotal }, 
-                    isPaid: true
-                }
-            }
-        }).session(session);
+    // Rule: Weekly Reduction Safety
+    if (newFreq === 'weekly' && newTotal < currentTotal) {
+        // Find max paid number
+        const maxPaidResult = await Subscription.aggregate([
+            { $match: { year: new mongoose.Types.ObjectId(id) } },
+            { $unwind: "$installments" },
+            { $match: { "installments.isPaid": true } },
+            { $group: { _id: null, maxNumber: { $max: "$installments.number" } } }
+        ]).session(session);
 
-        if (conflict) throw new Error(`Cannot reduce installments to ${newTotal}. Payments exist for later weeks.`);
+        const maxPaidNumber = maxPaidResult.length > 0 ? maxPaidResult[0].maxNumber : 0;
+
+        if (newTotal < maxPaidNumber) {
+            throw new Error(`Cannot reduce weeks to ${newTotal}. Installment #${maxPaidNumber} has already been paid.`);
+        }
     }
 
-    // 4. Apply Updates
+    // 6. Apply Updates to Year Doc
     if (name) yearDoc.name = name;
-    yearDoc.startDate = newStart;
-    yearDoc.endDate = newEnd;
+    if (startDate) yearDoc.startDate = new Date(startDate);
+    if (endDate) yearDoc.endDate = new Date(endDate);
+    
     yearDoc.subscriptionFrequency = newFreq;
     yearDoc.totalInstallments = newTotal;
-    yearDoc.amountPerInstallment = newAmount; 
+    yearDoc.amountPerInstallment = newAmount;
 
-    // 5. Adjust Subscriptions if needed
-    if (freqChanged || durationChanged || amountChanged) {
-        // Pass session to helper
-        await adjustSubscriptions({
-            yearId: id,
-            newFreq,
-            newTotal,
-            newAmount
-        }, session);
-    }
+    // 7. Run the Helper
+    await adjustSubscriptions({
+        yearId: id,
+        newTotal,
+        newAmount
+    }, session);
 
     await yearDoc.save({ session });
     
@@ -383,7 +362,7 @@ exports.updateYear = async (req, res) => {
         req, 
         action: "YEAR_UPDATED", 
         target: `Settings: ${yearDoc.name}`, 
-        details: { amount: newAmount, frequency: newFreq } 
+        details: { newAmount, newFreq, newTotal } 
     });
 
     await session.commitTransaction();
@@ -400,9 +379,8 @@ exports.updateYear = async (req, res) => {
     res.status(400).json({ message: err.message });
   }
 };
-
 /**
- * @desc Manually Close a Year (Protected with Transaction)
+ * @desc Manually Close a Year
  * @route POST /api/v1/years/:id/close
  */
 exports.closeYear = async (req, res) => {
@@ -418,12 +396,6 @@ exports.closeYear = async (req, res) => {
         if (!year) throw new Error("Year not found");
         if (year.isClosed) throw new Error("Year is already closed.");
     
-        // Calculate Final Balance
-        // calculateBalance is an aggregation, so it doesn't take session easily unless refactored,
-        // but it is a read-only op on other collections.
-        // However, to be strictly consistent, we should ideally run it in session, 
-        // but since it aggregates other collections, the risk is lower. 
-        // We will proceed with standard call.
         const finalBalance = await calculateBalance(year._id, year.openingBalance);
     
         year.isActive = false;

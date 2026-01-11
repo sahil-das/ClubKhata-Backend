@@ -12,7 +12,14 @@ const festivalYearSchema = new mongoose.Schema({
     enum: ["weekly", "monthly", "none"],
     required: true 
   },
-  totalInstallments: { type: Number, default: 52 }, 
+  
+  // ✅ FIX: Added limits here
+  totalInstallments: { 
+    type: Number, 
+    default: 52,
+    min: [0, "Must have at least 1 installment"],
+    max: [53, "Cannot exceed 53 installments (approx 1 year)"] 
+  }, 
   
   // These fields are correct
   amountPerInstallment: { ...mongooseMoney, default: 0 },
@@ -24,7 +31,6 @@ const festivalYearSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" }
 }, { 
   timestamps: true,
-  // 🚨 CRITICAL FIX: Tell Mongoose to run the "paisa-to-rupee" converter when sending API responses
   toJSON: { getters: true }, 
   toObject: { getters: true }
 });
