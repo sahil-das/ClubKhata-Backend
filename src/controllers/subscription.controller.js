@@ -23,6 +23,8 @@ exports.getMemberSubscription = async (req, res) => {
                     memberName: memberShip.user.name,
                     email: memberShip.user.email,
                     phone: memberShip.user.phone,
+                    personalEmail: memberShip.user.personalEmail,
+                    joinedAt: memberShip.joinedAt,
                     role: memberShip.role,
                     userId: memberShip.user._id
                 },
@@ -85,7 +87,8 @@ exports.getMemberSubscription = async (req, res) => {
             personalEmail: memberShip.user.personalEmail, 
             phone: memberShip.user.phone, 
             role: memberShip.role,        
-            userId: memberShip.user._id   
+            userId: memberShip.user._id,
+            joinedAt: memberShip.joinedAt  
         },
         year: {
             name: activeYear.name,
