@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
+const compression = require("compression");
 const connectDB = require("./config/db");
 const { PORT } = require("./config/env");
 const { globalLimiter, authLimiter } = require("./middleware/limiters");
@@ -36,6 +37,8 @@ app.use(
     credentials: true,
   })
 );
+
+app.use(compression());
 
 // 2. Set Security Headers
 // We enable Cross-Origin Resource Policy to allow frontend access to assets if needed
