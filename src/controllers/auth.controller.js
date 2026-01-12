@@ -275,21 +275,35 @@ exports.getMe = async (req, res, next) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    // ✅ FIX: Fetch memberships so the frontend can restore the active club
+    const memberships = await Membership.find({ user: user._id, status: "active" })
+      .populate("club", "name code");
+
     const responseUser = {
       id: user._id,
       name: user.name,
+      phone: user.phone,
       email: user.email,
       personalEmail: user.personalEmail,
       isPlatformAdmin: user.isPlatformAdmin,
-      role: user.role || "member", // Default to member if no club context
+      role: user.role || "member",
     };
 
-    res.status(200).json({ success: true, user: responseUser });
+    res.status(200).json({ 
+      success: true, 
+      user: responseUser,
+      // ✅ FIX: Include the clubs array in the response
+      clubs: memberships.map(m => ({
+        clubId: m.club._id,
+        clubName: m.club.name,
+        clubCode: m.club.code,
+        role: m.role
+      }))
+    });
   } catch (err) {
     next(err);
   }
 };
-
 /**
  * UPDATE PROFILE
  * 🔒 Security: Explicitly allows 'personalEmail' but BLOCKS 'email' (System ID).
