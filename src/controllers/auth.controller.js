@@ -294,24 +294,43 @@ exports.getMe = async (req, res, next) => {
 /**
  * UPDATE PROFILE
  */
-exports.updateProfile = async (req, res, next) => {
-    try {
-        const { name, phone, email } = req.body;
-        
-        const user = await User.findByIdAndUpdate(
-          req.user.id,
-          { name, phone, email },
-          { new: true, runValidators: true }
-        ).select("-password");
-    
-        res.json({
-          success: true,
-          data: user,
-          message: "Profile updated successfully"
-        });
-      } catch (err) {
-        next(err);
-      }
+exports.getMe = async (req, res, next) => {
+  try {
+    // req.user is populated by the protect middleware
+    const user = req.user;
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // ✅ FIX: Fetch memberships so the frontend can restore the active club
+    const memberships = await Membership.find({ user: user._id, status: "active" })
+      .populate("club", "name code");
+
+    const responseUser = {
+      id: user._id,
+      name: user.name,
+      phone: user.phone,
+      email: user.email,
+      personalEmail: user.personalEmail,
+      isPlatformAdmin: user.isPlatformAdmin,
+      role: user.role || "member",
+    };
+
+    res.status(200).json({ 
+      success: true, 
+      user: responseUser,
+      // ✅ FIX: Include the clubs array in the response
+      clubs: memberships.map(m => ({
+        clubId: m.club._id,
+        clubName: m.club.name,
+        clubCode: m.club.code,
+        role: m.role
+      }))
+    });
+  } catch (err) {
+    next(err);
+  }
 };
 
 /**
